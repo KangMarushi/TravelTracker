@@ -1,4 +1,4 @@
-import { Box, Heading, Text, Container, Button, HStack, VStack, Divider, useToast, Modal, ModalOverlay, ModalContent, ModalHeader, ModalBody, ModalFooter, ModalCloseButton, Input, Textarea, FormControl, FormLabel, List, ListItem, IconButton, Spinner, Badge, Flex, Alert, AlertIcon, Center, SimpleGrid, Stat, StatLabel, StatNumber, ChakraProvider } from '@chakra-ui/react'
+import { Box, Heading, Text, Container, Button, HStack, VStack, Divider, useToast, Modal, ModalOverlay, ModalContent, ModalHeader, ModalBody, ModalFooter, ModalCloseButton, Input, Textarea, FormControl, FormLabel, List, ListItem, IconButton, Spinner, Badge, Flex, Alert, AlertIcon, Center, SimpleGrid, Stat, StatLabel, StatNumber, ChakraProvider, Select } from '@chakra-ui/react'
 import { StarIcon } from '@chakra-ui/icons'
 import { useState, useRef, useEffect } from 'react'
 import maplibregl from 'maplibre-gl'
@@ -68,6 +68,9 @@ function App() {
   const [tripStats, setTripStats] = useState(null)
   const summaryMapRef = useRef(null)
   const summaryMapContainerRef = useRef(null)
+  const [recordingMode, setRecordingMode] = useState('time') // 'time' or 'distance'
+  const [recordingInterval, setRecordingInterval] = useState(20) // seconds
+  const [recordingDistance, setRecordingDistance] = useState(100) // meters
 
   // Add beforeunload handler
   useEffect(() => {
@@ -402,7 +405,14 @@ function App() {
     }
   }
 
-  // New function to handle continuous location watching with hybrid recording
+  // Function to handle recording mode change
+  const handleRecordingModeChange = (mode) => {
+    setRecordingMode(mode)
+    // Reset recording time when changing modes
+    lastRecordingTimeRef.current = null
+  }
+
+  // New function to handle continuous location watching with configurable recording
   const startContinuousWatching = () => {
     if (!navigator.geolocation) return
 
@@ -429,18 +439,19 @@ function App() {
           // Always update current location marker
           setCurrentLocation(newPoint)
 
-          // Check if we should record this point based on time and distance
+          // Check if we should record this point based on selected mode
           const shouldRecord = !lastRecordedPoint || // First point
-            now - lastRecordingTimeRef.current >= MIN_INTERVAL || // Time threshold
-            calculateDistance(
+            (recordingMode === 'time' && now - lastRecordingTimeRef.current >= recordingInterval * 1000) || // Time threshold
+            (recordingMode === 'distance' && calculateDistance(
               lastRecordedPoint.lat,
               lastRecordedPoint.lng,
               newPoint.lat,
               newPoint.lng
-            ) >= MIN_DISTANCE // Distance threshold
+            ) >= recordingDistance) // Distance threshold
 
           if (shouldRecord) {
             console.log('Recording new point:', {
+              mode: recordingMode,
               timeSinceLast: now - (lastRecordingTimeRef.current || now),
               distance: lastRecordedPoint ? calculateDistance(
                 lastRecordedPoint.lat,
