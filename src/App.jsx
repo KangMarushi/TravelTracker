@@ -68,9 +68,10 @@ function App() {
   const [tripStats, setTripStats] = useState(null)
   const summaryMapRef = useRef(null)
   const summaryMapContainerRef = useRef(null)
-  const [recordingMode, setRecordingMode] = useState('time') // 'time' or 'distance'
-  const [recordingInterval, setRecordingInterval] = useState(20) // seconds
-  const [recordingDistance, setRecordingDistance] = useState(100) // meters
+  const [recordingMode, setRecordingMode] = useState('time')
+  const [recordingInterval, setRecordingInterval] = useState(20)
+  const [recordingDistance, setRecordingDistance] = useState(100)
+  const [lastAddressUpdate, setLastAddressUpdate] = useState(0)
 
   // Add beforeunload handler
   useEffect(() => {
@@ -414,77 +415,65 @@ function App() {
 
   // New function to handle continuous location watching with configurable recording
   const startContinuousWatching = () => {
-    if (!navigator.geolocation) return
+    if (!navigator.geolocation) {
+      setGeoError('Geolocation is not supported by your browser')
+      return
+    }
 
     const options = {
       enableHighAccuracy: true,
-      maximumAge: 0,
-      timeout: 15000
+      timeout: 10000,
+      maximumAge: 0
     }
 
-    try {
-      watchIdRef.current = navigator.geolocation.watchPosition(
-        (position) => {
-          console.log('Location update received:', position)
-          const now = Date.now()
-          const newPoint = {
-            lat: position.coords.latitude,
-            lng: position.coords.longitude,
-            timestamp: new Date().toISOString()
-          }
-
-          // Update last update time
-          lastUpdateTimeRef.current = new Date()
-
-          // Always update current location marker
-          setCurrentLocation(newPoint)
-
-          // Check if we should record this point based on selected mode
-          const shouldRecord = !lastRecordedPoint || // First point
-            (recordingMode === 'time' && now - lastRecordingTimeRef.current >= recordingInterval * 1000) || // Time threshold
-            (recordingMode === 'distance' && calculateDistance(
-              lastRecordedPoint.lat,
-              lastRecordedPoint.lng,
-              newPoint.lat,
-              newPoint.lng
-            ) >= recordingDistance) // Distance threshold
-
-          if (shouldRecord) {
-            console.log('Recording new point:', {
-              mode: recordingMode,
-              timeSinceLast: now - (lastRecordingTimeRef.current || now),
-              distance: lastRecordedPoint ? calculateDistance(
-                lastRecordedPoint.lat,
-                lastRecordedPoint.lng,
-                newPoint.lat,
-                newPoint.lng
-              ) : 0
-            })
-            
-            setRoute(prevRoute => [...prevRoute, newPoint])
-            setLastRecordedPoint(newPoint)
-            lastRecordingTimeRef.current = now
-          }
-        },
-        (error) => {
-          console.error('Watch position error:', error)
-          setGeoError(`Location update error: ${error.message}. Trying to recover...`)
+    const watchId = navigator.geolocation.watchPosition(
+      (position) => {
+        const { latitude, longitude } = position.coords
+        const now = Date.now()
+        
+        // Always update the current location marker
+        if (mapRef.current) {
+          const currentLocation = [latitude, longitude]
+          mapRef.current.setCenter(currentLocation)
           
-          // Try to restart watching if we lose connection
-          if (watchIdRef.current) {
-            navigator.geolocation.clearWatch(watchIdRef.current)
-            watchIdRef.current = null
+          // Update or add the current location marker
+          if (currentLocationMarkerRef.current) {
+            currentLocationMarkerRef.current.setLngLat(currentLocation)
+          } else {
+            currentLocationMarkerRef.current = new maplibregl.Marker({
+              element: createMarkerElement('🧍'),
+              anchor: 'bottom'
+            })
+              .setLngLat(currentLocation)
+              .addTo(mapRef.current)
           }
-          setTimeout(() => {
-            startContinuousWatching()
-          }, 1000)
-        },
-        options
-      )
-    } catch (error) {
-      console.error('Error starting watch position:', error)
-      setGeoError('Error starting location tracking. Please try again.')
-    }
+        }
+
+        // Check if we should record a new point based on the selected mode
+        const shouldRecord = recordingMode === 'time' 
+          ? now - lastRecordingTimeRef.current >= recordingInterval * 1000
+          : calculateDistance(lastRecordedPoint, currentLocation) >= recordingDistance
+
+        if (shouldRecord) {
+          setRoute(prev => [...prev, currentLocation])
+          setLastRecordedPoint(currentLocation)
+          lastRecordingTimeRef.current = now
+        }
+
+        // Update address every 10 seconds
+        if (now - lastAddressUpdate >= 10000) {
+          getAddressFromCoordinates(latitude, longitude)
+          setLastAddressUpdate(now)
+        }
+      },
+      (error) => {
+        console.error('Geolocation error:', error)
+        setGeoError(`Error getting location: ${error.message}`)
+      },
+      options
+    )
+
+    setWatchId(watchId)
   }
 
   // Improved: Start trip recording
@@ -740,154 +729,136 @@ function App() {
   }, [showTripModal, selectedTrip])
 
   // Trip Summary Modal
-  const TripSummaryModal = () => {
-    // Initialize summary map when modal opens
+  const TripSummaryModal = ({ isOpen, onClose, stats, onSave }) => {
+    const summaryMapRef = useRef(null)
+    const summaryMapContainerRef = useRef(null)
+    const [summaryMap, setSummaryMap] = useState(null)
+
     useEffect(() => {
-      if (showSummary && tripStats && !summaryMapRef.current) {
-        const map = new maplibregl.Map({
-          container: summaryMapContainerRef.current,
-          style: `https://api.maptiler.com/maps/streets-v2/style.json?key=${MAPTILER_KEY}`,
-          center: [tripStats.startPoint.lng, tripStats.startPoint.lat],
-          zoom: 13
-        })
+      if (isOpen && stats && stats.route.length > 0) {
+        // Wait for the container to be ready
+        setTimeout(() => {
+          if (summaryMapContainerRef.current && !summaryMap) {
+            const map = new maplibregl.Map({
+              container: summaryMapContainerRef.current,
+              style: `https://api.maptiler.com/maps/streets-v2/style.json?key=${MAPTILER_KEY}`,
+              center: stats.route[0],
+              zoom: 13
+            })
 
-        map.on('load', () => {
-          // Add route line
-          map.addSource('route', {
-            type: 'geojson',
-            data: {
-              type: 'Feature',
-              properties: {},
-              geometry: {
-                type: 'LineString',
-                coordinates: tripStats.route.map(point => [point.lng, point.lat])
-              }
-            }
-          })
+            map.on('load', () => {
+              // Add the route line
+              map.addSource('route', {
+                type: 'geojson',
+                data: {
+                  type: 'Feature',
+                  properties: {},
+                  geometry: {
+                    type: 'LineString',
+                    coordinates: stats.route
+                  }
+                }
+              })
 
-          map.addLayer({
-            id: 'route',
-            type: 'line',
-            source: 'route',
-            layout: {
-              'line-join': 'round',
-              'line-cap': 'round'
-            },
-            paint: {
-              'line-color': '#3182CE',
-              'line-width': 3
-            }
-          })
+              map.addLayer({
+                id: 'route',
+                type: 'line',
+                source: 'route',
+                layout: {
+                  'line-join': 'round',
+                  'line-cap': 'round'
+                },
+                paint: {
+                  'line-color': '#0080ff',
+                  'line-width': 4
+                }
+              })
 
-          // Add start marker
-          map.addSource('start', {
-            type: 'geojson',
-            data: {
-              type: 'Feature',
-              geometry: {
-                type: 'Point',
-                coordinates: [tripStats.startPoint.lng, tripStats.startPoint.lat]
-              }
-            }
-          })
+              // Add start marker
+              new maplibregl.Marker({
+                element: createMarkerElement('🟢'),
+                anchor: 'bottom'
+              })
+                .setLngLat(stats.route[0])
+                .addTo(map)
 
-          map.addLayer({
-            id: 'start',
-            type: 'circle',
-            source: 'start',
-            paint: {
-              'circle-radius': 8,
-              'circle-color': '#48BB78'
-            }
-          })
+              // Add end marker
+              new maplibregl.Marker({
+                element: createMarkerElement('🔴'),
+                anchor: 'bottom'
+              })
+                .setLngLat(stats.route[stats.route.length - 1])
+                .addTo(map)
 
-          // Add end marker
-          map.addSource('end', {
-            type: 'geojson',
-            data: {
-              type: 'Feature',
-              geometry: {
-                type: 'Point',
-                coordinates: [tripStats.endPoint.lng, tripStats.endPoint.lat]
-              }
-            }
-          })
+              // Fit bounds to show the entire route
+              const bounds = stats.route.reduce((bounds, coord) => {
+                return bounds.extend(coord)
+              }, new maplibregl.LngLatBounds(stats.route[0], stats.route[0]))
 
-          map.addLayer({
-            id: 'end',
-            type: 'circle',
-            source: 'end',
-            paint: {
-              'circle-radius': 8,
-              'circle-color': '#E53E3E'
-            }
-          })
-        })
+              map.fitBounds(bounds, {
+                padding: 50,
+                duration: 1000
+              })
+            })
 
-        summaryMapRef.current = map
+            setSummaryMap(map)
+          }
+        }, 100)
+      }
 
-        return () => {
-          map.remove()
-          summaryMapRef.current = null
+      return () => {
+        if (summaryMap) {
+          summaryMap.remove()
+          setSummaryMap(null)
         }
       }
-    }, [showSummary, tripStats])
+    }, [isOpen, stats])
 
     return (
-      <Modal isOpen={showSummary} onClose={() => setShowSummary(false)} size="xl">
+      <Modal isOpen={isOpen} onClose={onClose} size="xl">
         <ModalOverlay />
         <ModalContent>
           <ModalHeader>Trip Summary</ModalHeader>
           <ModalCloseButton />
           <ModalBody>
             <VStack spacing={4} align="stretch">
-              {/* Stats Grid */}
-              <SimpleGrid columns={3} spacing={4}>
+              <SimpleGrid columns={2} spacing={4}>
                 <Stat>
                   <StatLabel>Distance</StatLabel>
-                  <StatNumber>{tripStats?.distance} km</StatNumber>
+                  <StatNumber>{stats.distance.toFixed(2)} km</StatNumber>
                 </Stat>
                 <Stat>
                   <StatLabel>Duration</StatLabel>
-                  <StatNumber>{tripStats?.duration} hrs</StatNumber>
+                  <StatNumber>{stats.duration}</StatNumber>
                 </Stat>
                 <Stat>
-                  <StatLabel>Avg Speed</StatLabel>
-                  <StatNumber>{tripStats?.avgSpeed} km/h</StatNumber>
+                  <StatLabel>Average Speed</StatLabel>
+                  <StatNumber>{stats.avgSpeed.toFixed(1)} km/h</StatNumber>
+                </Stat>
+                <Stat>
+                  <StatLabel>Points Recorded</StatLabel>
+                  <StatNumber>{stats.route.length}</StatNumber>
                 </Stat>
               </SimpleGrid>
 
-              {/* Route Map */}
-              <Box h="300px" position="relative" borderRadius="lg" overflow="hidden">
-                <div ref={summaryMapContainerRef} style={{ width: '100%', height: '100%' }} />
+              <Box>
+                <Text fontWeight="bold" mb={2}>Start Location</Text>
+                <Text>{stats.startPoint.address || 'Unknown location'}</Text>
               </Box>
 
-              {/* Start & End Points */}
-              <VStack align="stretch" spacing={2}>
-                <Box>
-                  <Text fontWeight="bold">Start Point:</Text>
-                  <Text>{tripStats?.startPoint.address || 'Loading...'}</Text>
-                  <Text fontSize="sm" color="gray.500">
-                    Lat: {tripStats?.startPoint.lat.toFixed(6)}, Lng: {tripStats?.startPoint.lng.toFixed(6)}
-                  </Text>
-                </Box>
-                <Box>
-                  <Text fontWeight="bold">End Point:</Text>
-                  <Text>{tripStats?.endPoint.address || 'Loading...'}</Text>
-                  <Text fontSize="sm" color="gray.500">
-                    Lat: {tripStats?.endPoint.lat.toFixed(6)}, Lng: {tripStats?.endPoint.lng.toFixed(6)}
-                  </Text>
-                </Box>
-              </VStack>
+              <Box>
+                <Text fontWeight="bold" mb={2}>End Location</Text>
+                <Text>{stats.endPoint.address || 'Unknown location'}</Text>
+              </Box>
+
+              <Box height="300px" ref={summaryMapContainerRef} />
             </VStack>
           </ModalBody>
           <ModalFooter>
-            <Button colorScheme="blue" mr={3} onClick={() => setShowSave(true)}>
+            <Button colorScheme="blue" mr={3} onClick={onSave}>
               Save Trip
             </Button>
-            <Button variant="ghost" onClick={() => setShowSummary(false)}>
-              Close
-            </Button>
+            <Button variant="ghost" onClick={onClose}>Close</Button>
           </ModalFooter>
         </ModalContent>
       </Modal>
@@ -992,7 +963,7 @@ function App() {
             )}
           </Box>
         </VStack>
-        <TripSummaryModal />
+        <TripSummaryModal isOpen={showSummary} onClose={() => setShowSummary(false)} stats={tripStats} onSave={() => handleSaveTrip({ name: tripName, notes: tripNotes, route, startTime })} />
         <Modal isOpen={showTripModal} onClose={() => setShowTripModal(false)} size="xl">
           <ModalOverlay />
           <ModalContent>
