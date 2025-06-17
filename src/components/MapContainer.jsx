@@ -1,5 +1,5 @@
 import React, { useRef, useEffect, useCallback } from 'react';
-import { Box, Center, Text, Button, VStack } from '@chakra-ui/react';
+import { Box } from '@chakra-ui/react';
 import maplibregl from 'maplibre-gl';
 import 'maplibre-gl/dist/maplibre-gl.css';
 
@@ -7,6 +7,7 @@ const MapContainer = ({ isTracking, currentLocation, route, onMapError }) => {
   const mapContainerRef = useRef(null);
   const mapRef = useRef(null);
   const markerRef = useRef(null);
+  const isFirstLoad = useRef(true);
 
   const createMarkerElement = (emoji) => {
     const el = document.createElement('div');
@@ -34,7 +35,9 @@ const MapContainer = ({ isTracking, currentLocation, route, onMapError }) => {
         center: [0, 0],
         zoom: 2,
         attributionControl: false,
-        preserveDrawingBuffer: true
+        preserveDrawingBuffer: true,
+        maxZoom: 18,
+        minZoom: 2
       });
 
       map.on('load', () => {
@@ -56,6 +59,17 @@ const MapContainer = ({ isTracking, currentLocation, route, onMapError }) => {
           })
             .setLngLat([longitude, latitude])
             .addTo(map);
+
+          // Set initial view if this is the first load
+          if (isFirstLoad.current) {
+            map.flyTo({
+              center: [longitude, latitude],
+              zoom: 15,
+              essential: true,
+              duration: 0
+            });
+            isFirstLoad.current = false;
+          }
         }
       });
 
@@ -83,14 +97,14 @@ const MapContainer = ({ isTracking, currentLocation, route, onMapError }) => {
 
   // Update marker and map when location changes
   useEffect(() => {
-    if (!mapRef.current || !currentLocation) return;
+    if (!mapRef.current || !currentLocation || !mapRef.current.loaded()) return;
 
     const { latitude, longitude } = currentLocation;
     
     // Update or create marker
     if (markerRef.current) {
       markerRef.current.setLngLat([longitude, latitude]);
-    } else if (mapRef.current.loaded()) {
+    } else {
       markerRef.current = new maplibregl.Marker({
         element: createMarkerElement('🚶'),
         anchor: 'bottom'
@@ -99,70 +113,66 @@ const MapContainer = ({ isTracking, currentLocation, route, onMapError }) => {
         .addTo(mapRef.current);
     }
 
-    // Update map view
-    if (mapRef.current.loaded()) {
+    // Update map view only when tracking
+    if (isTracking) {
+      const currentCenter = mapRef.current.getCenter();
       const currentZoom = mapRef.current.getZoom();
-      const targetZoom = isTracking ? 15 : Math.max(currentZoom, 12);
+      const distance = mapRef.current.getCenter().distanceTo([longitude, latitude]);
       
-      mapRef.current.flyTo({
-        center: [longitude, latitude],
-        zoom: targetZoom,
-        essential: true,
-        duration: 1000
-      });
+      // Only update if we've moved significantly or zoom is too far out
+      if (distance > 50 || currentZoom < 14) {
+        mapRef.current.flyTo({
+          center: [longitude, latitude],
+          zoom: 15,
+          essential: true,
+          duration: 1000,
+          maxDuration: 1000
+        });
+      }
     }
   }, [isTracking, currentLocation]);
 
   // Update route on map
   useEffect(() => {
-    if (!mapRef.current || !route || route.length === 0) return;
+    if (!mapRef.current || !route || route.length === 0 || !mapRef.current.loaded()) return;
 
-    // Ensure the map is loaded before trying to update it
-    if (!mapRef.current.loaded()) {
-      mapRef.current.once('load', () => {
-        updateRoute();
-      });
-    } else {
-      updateRoute();
+    const coordinates = route.map(point => [point.longitude, point.latitude]);
+
+    // Remove existing route layer if it exists
+    if (mapRef.current.getSource('route')) {
+      mapRef.current.removeLayer('route-line');
+      mapRef.current.removeSource('route');
     }
 
-    function updateRoute() {
-      const coordinates = route.map(point => [point.longitude, point.latitude]);
-
-      // Remove existing route layer if it exists
-      if (mapRef.current.getSource('route')) {
-        mapRef.current.removeLayer('route-line');
-        mapRef.current.removeSource('route');
+    // Add new route layer
+    mapRef.current.addSource('route', {
+      type: 'geojson',
+      data: {
+        type: 'Feature',
+        properties: {},
+        geometry: {
+          type: 'LineString',
+          coordinates
+        }
       }
+    });
 
-      // Add new route layer
-      mapRef.current.addSource('route', {
-        type: 'geojson',
-        data: {
-          type: 'Feature',
-          properties: {},
-          geometry: {
-            type: 'LineString',
-            coordinates
-          }
-        }
-      });
+    mapRef.current.addLayer({
+      id: 'route-line',
+      type: 'line',
+      source: 'route',
+      layout: {
+        'line-join': 'round',
+        'line-cap': 'round'
+      },
+      paint: {
+        'line-color': '#4299E1',
+        'line-width': 4
+      }
+    });
 
-      mapRef.current.addLayer({
-        id: 'route-line',
-        type: 'line',
-        source: 'route',
-        layout: {
-          'line-join': 'round',
-          'line-cap': 'round'
-        },
-        paint: {
-          'line-color': '#4299E1',
-          'line-width': 4
-        }
-      });
-
-      // Fit map to route bounds with padding
+    // Only fit bounds if we're not tracking
+    if (!isTracking) {
       const bounds = coordinates.reduce((bounds, coord) => {
         return bounds.extend(coord);
       }, new maplibregl.LngLatBounds(coordinates[0], coordinates[0]));
@@ -173,7 +183,7 @@ const MapContainer = ({ isTracking, currentLocation, route, onMapError }) => {
         maxZoom: 15
       });
     }
-  }, [route]);
+  }, [route, isTracking]);
 
   return (
     <Box

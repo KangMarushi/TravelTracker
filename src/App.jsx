@@ -52,7 +52,7 @@ function App() {
         notes: tripData.notes,
         stats: tripData.stats,
         route: tripData.route, // Fix: Use tripData.route instead of tripData.stats.route
-        created_at: new Date().toISOString(),
+        createdAt: new Date().toISOString(),
       };
 
       console.log('Formatted trip data:', tripToSave);
