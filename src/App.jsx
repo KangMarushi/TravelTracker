@@ -38,7 +38,7 @@ function App() {
   const [showTripModal, setShowTripModal] = useState(false)
   const [favoriteLoading, setFavoriteLoading] = useState(false)
   const [geoError, setGeoError] = useState(null)
-  const [mapLoading, setMapLoading] = useState(true)
+  const [mapLoading, setMapLoading] = useState(false)
   const [mapError, setMapError] = useState(null)
   const timerRef = useRef(null)
   const geoRef = useRef(null)
@@ -72,7 +72,7 @@ function App() {
   const [recordingInterval, setRecordingInterval] = useState(20)
   const [recordingDistance, setRecordingDistance] = useState(100)
   const [lastAddressUpdate, setLastAddressUpdate] = useState(0)
-  const [isInitializing, setIsInitializing] = useState(true)
+  const [isInitializing, setIsInitializing] = useState(false)
   const initialWatchIdRef = useRef(null)
   const [error, setError] = useState(null)
 
@@ -230,7 +230,7 @@ function App() {
   }, [isTracking, route, startTime, lastRecordedPoint, currentLocation, currentAddress])
 
   // Initialize map
-  useEffect(() => {
+  const initializeMap = () => {
     if (!mapContainerRef.current || mapRef.current) return;
 
     try {
@@ -240,7 +240,7 @@ function App() {
       const map = new maplibregl.Map({
         container: mapContainerRef.current,
         style: `https://api.maptiler.com/maps/streets-v2/style.json?key=${MAPTILER_KEY}`,
-        center: [78.6937, 10.7905], // Default to Trichy
+        center: [78.6937, 10.7905],
         zoom: 13
       });
 
@@ -248,8 +248,7 @@ function App() {
         console.log('Map loaded successfully');
         mapRef.current = map;
         setMapLoading(false);
-        // Start initial location tracking after map is loaded
-        startInitialLocationTracking();
+        startLocationTracking();
       });
 
       map.on('error', (e) => {
@@ -257,28 +256,21 @@ function App() {
         setMapError('Error loading map. Please check your internet connection and refresh the page.');
         setMapLoading(false);
       });
-
-      return () => {
-        if (map) {
-          map.remove();
-          mapRef.current = null;
-        }
-      };
     } catch (error) {
       console.error('Error initializing map:', error);
       setMapError('Failed to initialize map. Please refresh the page.');
       setMapLoading(false);
     }
-  }, []);
+  };
 
-  // Start initial location tracking
-  const startInitialLocationTracking = () => {
+  // Start location tracking
+  const startLocationTracking = () => {
     if (!navigator.geolocation) {
-      setError('Geolocation is not supported by your browser');
-      setIsInitializing(false);
+      setGeoError('Geolocation is not supported by your browser');
       return;
     }
 
+    setIsInitializing(true);
     const options = {
       enableHighAccuracy: true,
       timeout: 10000,
@@ -286,20 +278,18 @@ function App() {
     };
 
     try {
-      initialWatchIdRef.current = navigator.geolocation.watchPosition(
+      watchIdRef.current = navigator.geolocation.watchPosition(
         (position) => {
           const { latitude, longitude } = position.coords;
           setCurrentLocation([latitude, longitude]);
           
-          // Update map center if map is ready
           if (mapRef.current) {
             mapRef.current.setCenter([longitude, latitude]);
             
-            // Update or add the current location marker
-            if (currentLocationMarkerRef.current) {
-              currentLocationMarkerRef.current.setLngLat([longitude, latitude]);
+            if (markerRef.current) {
+              markerRef.current.setLngLat([longitude, latitude]);
             } else {
-              currentLocationMarkerRef.current = new maplibregl.Marker({
+              markerRef.current = new maplibregl.Marker({
                 element: createMarkerElement('🧍'),
                 anchor: 'bottom'
               })
@@ -308,29 +298,60 @@ function App() {
             }
           }
 
-          // Get initial address
           getAddressFromCoordinates(latitude, longitude);
           setIsInitializing(false);
         },
         (error) => {
-          console.error('Initial geolocation error:', error);
-          setError(`Error getting initial location: ${error.message}`);
+          console.error('Geolocation error:', error);
+          setGeoError(`Error getting location: ${error.message}`);
           setIsInitializing(false);
         },
         options
       );
     } catch (error) {
       console.error('Error starting location tracking:', error);
-      setError('Failed to start location tracking');
+      setGeoError('Failed to start location tracking');
       setIsInitializing(false);
     }
   };
 
-  // Cleanup function
+  // Start trip
+  const handleStart = () => {
+    setIsTracking(true);
+    const now = new Date();
+    setStartTime(now);
+    setElapsed(0);
+    timerRef.current = setInterval(() => {
+      setElapsed(Math.floor((new Date() - now) / 1000));
+    }, 1000);
+
+    // Initialize map and start tracking
+    initializeMap();
+  };
+
+  // Stop trip
+  const handleStop = () => {
+    if (watchIdRef.current) {
+      navigator.geolocation.clearWatch(watchIdRef.current);
+    }
+    clearInterval(timerRef.current);
+    setIsTracking(false);
+    
+    if (route.length > 0) {
+      const stats = calculateTripStats(route, startTime);
+      setTripStats(stats);
+      setShowSummary(true);
+    }
+  };
+
+  // Cleanup
   useEffect(() => {
     return () => {
-      if (initialWatchIdRef.current) {
-        navigator.geolocation.clearWatch(initialWatchIdRef.current);
+      if (watchIdRef.current) {
+        navigator.geolocation.clearWatch(watchIdRef.current);
+      }
+      if (timerRef.current) {
+        clearInterval(timerRef.current);
       }
       if (mapRef.current) {
         mapRef.current.remove();
@@ -520,57 +541,6 @@ function App() {
     setWatchId(watchId)
   }
 
-  // Update the useEffect for map initialization
-  useEffect(() => {
-    if (mapContainerRef.current && !mapRef.current) {
-      setIsInitializing(true);
-      const map = new maplibregl.Map({
-        container: mapContainerRef.current,
-        style: `https://api.maptiler.com/maps/streets-v2/style.json?key=${MAPTILER_KEY}`,
-        center: [78.6937, 10.7905], // Default to Trichy
-        zoom: 13
-      });
-
-      map.on('load', () => {
-        setMapLoading(false);
-        mapRef.current = map;
-        // Start initial location tracking after map is loaded
-        startInitialLocationTracking();
-      });
-
-      map.on('error', (e) => {
-        console.error('Map error:', e);
-        setMapError('Error loading map. Please refresh the page.');
-        setMapLoading(false);
-      });
-    }
-
-    return () => {
-      if (initialWatchIdRef.current) {
-        navigator.geolocation.clearWatch(initialWatchIdRef.current);
-      }
-      if (mapRef.current) {
-        mapRef.current.remove();
-        mapRef.current = null;
-      }
-    };
-  }, []);
-
-  // Update the handleStart function to use existing location
-  const handleStart = () => {
-    if (!currentLocation) {
-      setError('Waiting for location...');
-      return;
-    }
-
-    setIsTracking(true);
-    setStartTime(new Date());
-    setRoute([currentLocation]);
-    setLastRecordingTime(Date.now());
-    setLastPoint(currentLocation);
-    startContinuousWatching();
-  };
-
   // Function to calculate trip statistics
   const calculateTripStats = (route, startTime) => {
     if (!route || route.length === 0) {
@@ -616,26 +586,6 @@ function App() {
       endAddress: 'Loading...', // Will be updated with reverse geocoding
       route
     };
-  }
-
-  // Stop trip recording
-  const handleStop = () => {
-    if (watchIdRef.current) {
-      navigator.geolocation.clearWatch(watchIdRef.current)
-      watchIdRef.current = null
-    }
-    setIsTracking(false)
-    setIsTrackingInterrupted(false)
-    clearInterval(timerRef.current)
-    setCurrentLocation(null)
-    localStorage.removeItem('currentTrip')
-    
-    // Calculate trip statistics
-    if (route.length > 0) {
-      const stats = calculateTripStats(route, startTime)
-      setTripStats(stats)
-      setShowSummary(true)
-    }
   }
 
   // Handle save trip
