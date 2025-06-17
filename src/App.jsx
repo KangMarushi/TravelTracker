@@ -1,8 +1,9 @@
-import { Box, Heading, Text, Container, Button, HStack, VStack, Divider, useToast, Modal, ModalOverlay, ModalContent, ModalHeader, ModalBody, ModalFooter, ModalCloseButton, Input, Textarea, FormControl, FormLabel, List, ListItem, IconButton, Spinner, Badge, Flex, Alert, AlertIcon, Center } from '@chakra-ui/react'
+import { Box, Heading, Text, Container, Button, HStack, VStack, Divider, useToast, Modal, ModalOverlay, ModalContent, ModalHeader, ModalBody, ModalFooter, ModalCloseButton, Input, Textarea, FormControl, FormLabel, List, ListItem, IconButton, Spinner, Badge, Flex, Alert, AlertIcon, Center, SimpleGrid, Stat, StatLabel, StatNumber, ChakraProvider } from '@chakra-ui/react'
 import { StarIcon } from '@chakra-ui/icons'
 import { useState, useRef, useEffect } from 'react'
 import maplibregl from 'maplibre-gl'
 import { supabase } from './supabaseClient'
+import * as turf from '@turf/turf'
 
 const MAPTILER_KEY = 'Uu2plMpWPcX4fjAFpFNr'
 
@@ -63,6 +64,8 @@ function App() {
   const [isLoadingAddress, setIsLoadingAddress] = useState(false)
   const lastGeocodeTimeRef = useRef(null)
   const GEOCODE_INTERVAL = 50000 // Only geocode every 50 seconds
+  const [showSummary, setShowSummary] = useState(false)
+  const [tripStats, setTripStats] = useState(null)
 
   // Add beforeunload handler
   useEffect(() => {
@@ -231,7 +234,7 @@ function App() {
           container: mapContainer.current,
           style: `https://api.maptiler.com/maps/streets-v2/style.json?key=${MAPTILER_KEY}`,
           center: [78.6937, 10.7905], // Trichy coordinates
-          zoom: 20
+          zoom: 15
         })
 
         map.on('load', () => {
@@ -560,6 +563,34 @@ function App() {
     }
   }
 
+  // Function to calculate trip statistics
+  const calculateTripStats = (route) => {
+    if (route.length < 2) return null
+
+    // Create a line string from the route points
+    const line = turf.lineString(route.map(point => [point.lng, point.lat]))
+    
+    // Calculate total distance in kilometers
+    const distance = turf.length(line, { units: 'kilometers' })
+    
+    // Calculate average speed in km/h
+    const duration = (new Date(route[route.length - 1].timestamp) - new Date(route[0].timestamp)) / 1000 / 60 / 60 // hours
+    const avgSpeed = distance / duration
+
+    // Get start and end addresses
+    const startPoint = route[0]
+    const endPoint = route[route.length - 1]
+
+    return {
+      distance: distance.toFixed(2),
+      duration: duration.toFixed(2),
+      avgSpeed: avgSpeed.toFixed(2),
+      startPoint,
+      endPoint,
+      route
+    }
+  }
+
   // Stop trip recording
   const handleStop = () => {
     setIsTracking(false)
@@ -571,35 +602,53 @@ function App() {
     }
     setCurrentLocation(null)
     localStorage.removeItem('currentTrip')
-    localStorage.removeItem('trackingInterrupted')
-    localStorage.removeItem('lastUpdateTime')
-    setShowSave(true)
+    
+    // Calculate trip statistics
+    const stats = calculateTripStats(route)
+    setTripStats(stats)
+    setShowSummary(true)
   }
 
-  // Save trip to Supabase
-  const handleSaveTrip = async () => {
-    setSaving(true)
-    const trip = {
-      name: tripName,
-      date: startTime ? startTime.toISOString().slice(0, 10) : null,
-      notes: tripNotes,
-      route,
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-      isFavorite: false,
-    }
-    const { error } = await supabase.from('trips').insert([trip])
-    setSaving(false)
-    if (error) {
-      toast({ title: 'Error saving trip', description: error.message, status: 'error', duration: 5000, isClosable: true })
-    } else {
-      toast({ title: 'Trip saved!', status: 'success', duration: 3000, isClosable: true })
+  // Handle save trip
+  const handleSaveTrip = async (tripData) => {
+    try {
+      const { data, error } = await supabase
+        .from('trips')
+        .insert([{
+          name: tripData.name,
+          notes: tripData.notes,
+          route: tripData.route,
+          startTime: tripData.startTime,
+          endTime: new Date().toISOString(),
+          distance: tripStats.distance,
+          duration: tripStats.duration,
+          avgSpeed: tripStats.avgSpeed,
+          startPoint: tripStats.startPoint,
+          endPoint: tripStats.endPoint
+        }])
+
+      if (error) throw error
+
+      toast({
+        title: 'Trip saved successfully!',
+        status: 'success',
+        duration: 3000,
+        isClosable: true,
+      })
+
       setShowSave(false)
-      setTripName('')
-      setTripNotes('')
-      setRoute([])
-      setElapsed(0)
-      setStartTime(null)
+      setShowSummary(false)
+      setTripStats(null)
+      fetchTrips()
+    } catch (error) {
+      console.error('Error saving trip:', error)
+      toast({
+        title: 'Error saving trip',
+        description: error.message,
+        status: 'error',
+        duration: 5000,
+        isClosable: true,
+      })
     }
   }
 
@@ -677,153 +726,238 @@ function App() {
     return () => map.remove()
   }, [showTripModal, selectedTrip])
 
-  return (
-    <Container maxW="container.md" py={10}>
-      <Box textAlign="center" mb={8}>
-        <Heading as="h1" size="2xl" mb={2} color="teal.400">
-          Travel Tracker
-        </Heading>
-        <Text fontSize="lg" color="gray.500">
-          Record, view, and relive your journeys.
-        </Text>
-      </Box>
-      {geoError && (
-        <Alert status="error" mb={4}>
-          <AlertIcon />
-          Geolocation error: {geoError}
-        </Alert>
-      )}
-      <Box p={2} mb={2} bg="gray.100" borderRadius="md">
-        <Text fontSize="xs" color="gray.600">Debug: Route array ({route.length} points)</Text>
-        <pre style={{ fontSize: '10px', whiteSpace: 'pre-wrap', wordBreak: 'break-all', maxHeight: 100, overflowY: 'auto' }}>{JSON.stringify(route, null, 2)}</pre>
-      </Box>
-      <VStack spacing={6} align="stretch">
-        <Box p={6} borderWidth={1} borderRadius="lg" bg="gray.50">
-          <HStack justify="space-between">
-            <Button colorScheme="teal" onClick={handleStart} isDisabled={isTracking}>
-              Start Trip
-            </Button>
-            <Button colorScheme="red" onClick={handleStop} isDisabled={!isTracking}>
-              Stop Trip
-            </Button>
-          </HStack>
-          <Divider my={4} />
-          {isTracking && (
-            <Box textAlign="center">
-              <Text fontSize="md" color="teal.600">Tracking in progress...</Text>
-              <Text>Elapsed: {Math.floor(elapsed / 60)}m {elapsed % 60}s</Text>
-              <Text>Points recorded: {route.length}</Text>
+  // Trip Summary Modal
+  const TripSummaryModal = () => (
+    <Modal isOpen={showSummary} onClose={() => setShowSummary(false)} size="xl">
+      <ModalOverlay />
+      <ModalContent>
+        <ModalHeader>Trip Summary</ModalHeader>
+        <ModalCloseButton />
+        <ModalBody>
+          <VStack spacing={4} align="stretch">
+            {/* Stats Grid */}
+            <SimpleGrid columns={3} spacing={4}>
+              <Stat>
+                <StatLabel>Distance</StatLabel>
+                <StatNumber>{tripStats?.distance} km</StatNumber>
+              </Stat>
+              <Stat>
+                <StatLabel>Duration</StatLabel>
+                <StatNumber>{tripStats?.duration} hrs</StatNumber>
+              </Stat>
+              <Stat>
+                <StatLabel>Avg Speed</StatLabel>
+                <StatNumber>{tripStats?.avgSpeed} km/h</StatNumber>
+              </Stat>
+            </SimpleGrid>
+
+            {/* Route Map */}
+            <Box h="300px" position="relative" borderRadius="lg" overflow="hidden">
+              <MapContainer
+                center={[tripStats?.startPoint.lat, tripStats?.startPoint.lng]}
+                zoom={13}
+                style={{ height: '100%', width: '100%' }}
+              >
+                <TileLayer
+                  url={`https://api.maptiler.com/maps/streets-v2/{z}/{x}/{y}.png?key=${MAPTILER_KEY}`}
+                />
+                <Polyline
+                  positions={tripStats?.route.map(point => [point.lat, point.lng])}
+                  color="#3182CE"
+                  weight={3}
+                />
+                {/* Start Marker */}
+                <Marker position={[tripStats?.startPoint.lat, tripStats?.startPoint.lng]}>
+                  <Popup>Start Point</Popup>
+                </Marker>
+                {/* End Marker */}
+                <Marker position={[tripStats?.endPoint.lat, tripStats?.endPoint.lng]}>
+                  <Popup>End Point</Popup>
+                </Marker>
+              </MapContainer>
             </Box>
-          )}
-          {!isTracking && route.length > 0 && (
-            <Box textAlign="center">
-              <Text color="gray.600">Trip recorded with {route.length} points.</Text>
-            </Box>
-          )}
-        </Box>
-        <Box p={0} borderWidth={1} borderRadius="lg" bg="gray.50" minH="400px" height="400px" overflow="hidden" position="relative">
-          {mapLoading && (
-            <Center position="absolute" top={0} left={0} right={0} bottom={0} bg="gray.50">
-              <Spinner size="xl" color="teal.500" />
-            </Center>
-          )}
-          {mapError && (
-            <Center position="absolute" top={0} left={0} right={0} bottom={0} bg="gray.50">
-              <Alert status="error">
-                <AlertIcon />
-                {mapError}
-              </Alert>
-            </Center>
-          )}
-          {isGettingLocation && (
-            <Center position="absolute" top={0} left={0} right={0} bottom={0} bg="gray.50" zIndex={1}>
-              <VStack>
-                <Spinner size="xl" />
-                <Text>Getting your location...</Text>
+
+            {/* Start & End Points */}
+            <VStack align="stretch" spacing={2}>
+              <Box>
+                <Text fontWeight="bold">Start Point:</Text>
+                <Text>{tripStats?.startPoint.address || 'Loading...'}</Text>
                 <Text fontSize="sm" color="gray.500">
-                  Attempt {locationRetryCountRef.current + 1} of {MAX_RETRIES}
+                  Lat: {tripStats?.startPoint.lat.toFixed(6)}, Lng: {tripStats?.startPoint.lng.toFixed(6)}
                 </Text>
-              </VStack>
-            </Center>
-          )}
-          <div ref={mapContainer} style={{ width: '100%', height: '100%', visibility: mapLoading ? 'hidden' : 'visible' }} />
-          {!isTracking && route.length === 0 && !mapLoading && !mapError && (
-            <Text color="gray.400" textAlign="center" mt={4}>No location points recorded yet. Start a trip to begin tracking.</Text>
-          )}
-        </Box>
-        <Box p={6} borderWidth={1} borderRadius="lg" bg="gray.50">
-          <Heading as="h2" size="md" mb={4} color="teal.600">Trip History</Heading>
-          {loadingTrips ? (
-            <Flex justify="center" align="center" minH="80px"><Spinner /></Flex>
-          ) : trips.length === 0 ? (
-            <Text color="gray.400">No trips recorded yet.</Text>
-          ) : (
-            <List spacing={3}>
-              {trips.map(trip => (
-                <ListItem key={trip.id} p={3} borderWidth={1} borderRadius="md" bg="white" _hover={{ bg: 'gray.50', cursor: 'pointer' }}>
-                  <HStack justify="space-between">
-                    <Box onClick={() => handleShowTrip(trip)}>
-                      <Text fontWeight="bold">{trip.name} {trip.isFavorite && <StarIcon color="yellow.400" />}</Text>
-                      <Text fontSize="sm" color="gray.500">{trip.date}</Text>
-                    </Box>
-                    <IconButton icon={<StarIcon />} aria-label="Favorite" colorScheme={trip.isFavorite ? 'yellow' : 'gray'} variant={trip.isFavorite ? 'solid' : 'outline'} isRound size="sm" isLoading={favoriteLoading} onClick={() => handleFavorite(trip)} />
-                  </HStack>
-                </ListItem>
-              ))}
-            </List>
-          )}
-        </Box>
-      </VStack>
-      <Modal isOpen={showTripModal} onClose={() => setShowTripModal(false)} size="xl">
-        <ModalOverlay />
-        <ModalContent>
-          <ModalHeader>{selectedTrip?.name}</ModalHeader>
-          <ModalCloseButton />
-          <ModalBody>
-            <Text fontSize="sm" color="gray.500" mb={2}>Date: {selectedTrip?.date}</Text>
-            <Text mb={2}><b>Notes:</b> {selectedTrip?.notes || <span style={{ color: '#aaa' }}>No notes</span>}</Text>
-            <Box mb={2}><b>Points:</b> {selectedTrip?.route?.length}</Box>
-            <Box mb={2} height="300px" borderWidth={1} borderRadius="md" overflow="hidden">
-              <div ref={tripMapRef} style={{ width: '100%', height: '100%' }} />
-            </Box>
-            <Box>
-              <Heading as="h4" size="sm" mb={1}>Timestamps</Heading>
-              <Box maxH="100px" overflowY="auto" bg="gray.50" p={2} borderRadius="md">
-                {selectedTrip?.route?.map((p, i) => (
-                  <Text key={i} fontSize="xs">{p.timestamp} ({p.lat.toFixed(4)}, {p.lng.toFixed(4)})</Text>
-                ))}
               </Box>
-            </Box>
-          </ModalBody>
-          <ModalFooter>
-            <Button onClick={() => setShowTripModal(false)} variant="ghost">Close</Button>
-          </ModalFooter>
-        </ModalContent>
-      </Modal>
-      <Modal isOpen={showSave} onClose={() => setShowSave(false)}>
-        <ModalOverlay />
-        <ModalContent>
-          <ModalHeader>Save Trip</ModalHeader>
-          <ModalCloseButton />
-          <ModalBody>
-            <FormControl mb={3} isRequired>
-              <FormLabel>Trip Name</FormLabel>
-              <Input value={tripName} onChange={e => setTripName(e.target.value)} placeholder="e.g. France to Germany" />
-            </FormControl>
-            <FormControl mb={3}>
-              <FormLabel>Notes</FormLabel>
-              <Textarea value={tripNotes} onChange={e => setTripNotes(e.target.value)} placeholder="Trip notes (optional)" />
-            </FormControl>
-          </ModalBody>
-          <ModalFooter>
-            <Button colorScheme="teal" mr={3} onClick={handleSaveTrip} isLoading={saving} isDisabled={!tripName}>
-              Save
-            </Button>
-            <Button onClick={() => setShowSave(false)} variant="ghost">Cancel</Button>
-          </ModalFooter>
-        </ModalContent>
-      </Modal>
-    </Container>
+              <Box>
+                <Text fontWeight="bold">End Point:</Text>
+                <Text>{tripStats?.endPoint.address || 'Loading...'}</Text>
+                <Text fontSize="sm" color="gray.500">
+                  Lat: {tripStats?.endPoint.lat.toFixed(6)}, Lng: {tripStats?.endPoint.lng.toFixed(6)}
+                </Text>
+              </Box>
+            </VStack>
+          </VStack>
+        </ModalBody>
+        <ModalFooter>
+          <Button colorScheme="blue" mr={3} onClick={() => setShowSave(true)}>
+            Save Trip
+          </Button>
+          <Button variant="ghost" onClick={() => setShowSummary(false)}>
+            Close
+          </Button>
+        </ModalFooter>
+      </ModalContent>
+    </Modal>
+  )
+
+  return (
+    <ChakraProvider>
+      <Container maxW="container.md" py={10}>
+        <Box textAlign="center" mb={8}>
+          <Heading as="h1" size="2xl" mb={2} color="teal.400">
+            Travel Tracker
+          </Heading>
+          <Text fontSize="lg" color="gray.500">
+            Record, view, and relive your journeys.
+          </Text>
+        </Box>
+        {geoError && (
+          <Alert status="error" mb={4}>
+            <AlertIcon />
+            Geolocation error: {geoError}
+          </Alert>
+        )}
+        <Box p={2} mb={2} bg="gray.100" borderRadius="md">
+          <Text fontSize="xs" color="gray.600">Debug: Route array ({route.length} points)</Text>
+          <pre style={{ fontSize: '10px', whiteSpace: 'pre-wrap', wordBreak: 'break-all', maxHeight: 100, overflowY: 'auto' }}>{JSON.stringify(route, null, 2)}</pre>
+        </Box>
+        <VStack spacing={6} align="stretch">
+          <Box p={6} borderWidth={1} borderRadius="lg" bg="gray.50">
+            <HStack justify="space-between">
+              <Button colorScheme="teal" onClick={handleStart} isDisabled={isTracking}>
+                Start Trip
+              </Button>
+              <Button colorScheme="red" onClick={handleStop} isDisabled={!isTracking}>
+                Stop Trip
+              </Button>
+            </HStack>
+            <Divider my={4} />
+            {isTracking && (
+              <Box textAlign="center">
+                <Text fontSize="md" color="teal.600">Tracking in progress...</Text>
+                <Text>Elapsed: {Math.floor(elapsed / 60)}m {elapsed % 60}s</Text>
+                <Text>Points recorded: {route.length}</Text>
+              </Box>
+            )}
+            {!isTracking && route.length > 0 && (
+              <Box textAlign="center">
+                <Text color="gray.600">Trip recorded with {route.length} points.</Text>
+              </Box>
+            )}
+          </Box>
+          <Box p={0} borderWidth={1} borderRadius="lg" bg="gray.50" minH="400px" height="400px" overflow="hidden" position="relative">
+            {mapLoading && (
+              <Center position="absolute" top={0} left={0} right={0} bottom={0} bg="gray.50">
+                <Spinner size="xl" color="teal.500" />
+              </Center>
+            )}
+            {mapError && (
+              <Center position="absolute" top={0} left={0} right={0} bottom={0} bg="gray.50">
+                <Alert status="error">
+                  <AlertIcon />
+                  {mapError}
+                </Alert>
+              </Center>
+            )}
+            {isGettingLocation && (
+              <Center position="absolute" top={0} left={0} right={0} bottom={0} bg="gray.50" zIndex={1}>
+                <VStack>
+                  <Spinner size="xl" />
+                  <Text>Getting your location...</Text>
+                  <Text fontSize="sm" color="gray.500">
+                    Attempt {locationRetryCountRef.current + 1} of {MAX_RETRIES}
+                  </Text>
+                </VStack>
+              </Center>
+            )}
+            <div ref={mapContainer} style={{ width: '100%', height: '100%', visibility: mapLoading ? 'hidden' : 'visible' }} />
+            {!isTracking && route.length === 0 && !mapLoading && !mapError && (
+              <Text color="gray.400" textAlign="center" mt={4}>No location points recorded yet. Start a trip to begin tracking.</Text>
+            )}
+          </Box>
+          <Box p={6} borderWidth={1} borderRadius="lg" bg="gray.50">
+            <Heading as="h2" size="md" mb={4} color="teal.600">Trip History</Heading>
+            {loadingTrips ? (
+              <Flex justify="center" align="center" minH="80px"><Spinner /></Flex>
+            ) : trips.length === 0 ? (
+              <Text color="gray.400">No trips recorded yet.</Text>
+            ) : (
+              <List spacing={3}>
+                {trips.map(trip => (
+                  <ListItem key={trip.id} p={3} borderWidth={1} borderRadius="md" bg="white" _hover={{ bg: 'gray.50', cursor: 'pointer' }}>
+                    <HStack justify="space-between">
+                      <Box onClick={() => handleShowTrip(trip)}>
+                        <Text fontWeight="bold">{trip.name} {trip.isFavorite && <StarIcon color="yellow.400" />}</Text>
+                        <Text fontSize="sm" color="gray.500">{trip.date}</Text>
+                      </Box>
+                      <IconButton icon={<StarIcon />} aria-label="Favorite" colorScheme={trip.isFavorite ? 'yellow' : 'gray'} variant={trip.isFavorite ? 'solid' : 'outline'} isRound size="sm" isLoading={favoriteLoading} onClick={() => handleFavorite(trip)} />
+                    </HStack>
+                  </ListItem>
+                ))}
+              </List>
+            )}
+          </Box>
+        </VStack>
+        <TripSummaryModal />
+        <Modal isOpen={showTripModal} onClose={() => setShowTripModal(false)} size="xl">
+          <ModalOverlay />
+          <ModalContent>
+            <ModalHeader>{selectedTrip?.name}</ModalHeader>
+            <ModalCloseButton />
+            <ModalBody>
+              <Text fontSize="sm" color="gray.500" mb={2}>Date: {selectedTrip?.date}</Text>
+              <Text mb={2}><b>Notes:</b> {selectedTrip?.notes || <span style={{ color: '#aaa' }}>No notes</span>}</Text>
+              <Box mb={2}><b>Points:</b> {selectedTrip?.route?.length}</Box>
+              <Box mb={2} height="300px" borderWidth={1} borderRadius="md" overflow="hidden">
+                <div ref={tripMapRef} style={{ width: '100%', height: '100%' }} />
+              </Box>
+              <Box>
+                <Heading as="h4" size="sm" mb={1}>Timestamps</Heading>
+                <Box maxH="100px" overflowY="auto" bg="gray.50" p={2} borderRadius="md">
+                  {selectedTrip?.route?.map((p, i) => (
+                    <Text key={i} fontSize="xs">{p.timestamp} ({p.lat.toFixed(4)}, {p.lng.toFixed(4)})</Text>
+                  ))}
+                </Box>
+              </Box>
+            </ModalBody>
+            <ModalFooter>
+              <Button onClick={() => setShowTripModal(false)} variant="ghost">Close</Button>
+            </ModalFooter>
+          </ModalContent>
+        </Modal>
+        <Modal isOpen={showSave} onClose={() => setShowSave(false)}>
+          <ModalOverlay />
+          <ModalContent>
+            <ModalHeader>Save Trip</ModalHeader>
+            <ModalCloseButton />
+            <ModalBody>
+              <FormControl mb={3} isRequired>
+                <FormLabel>Trip Name</FormLabel>
+                <Input value={tripName} onChange={e => setTripName(e.target.value)} placeholder="e.g. France to Germany" />
+              </FormControl>
+              <FormControl mb={3}>
+                <FormLabel>Notes</FormLabel>
+                <Textarea value={tripNotes} onChange={e => setTripNotes(e.target.value)} placeholder="Trip notes (optional)" />
+              </FormControl>
+            </ModalBody>
+            <ModalFooter>
+              <Button colorScheme="teal" mr={3} onClick={() => handleSaveTrip({ name: tripName, notes: tripNotes, route, startTime })} isLoading={saving} isDisabled={!tripName}>
+                Save
+              </Button>
+              <Button onClick={() => setShowSave(false)} variant="ghost">Cancel</Button>
+            </ModalFooter>
+          </ModalContent>
+        </Modal>
+      </Container>
+    </ChakraProvider>
   )
 }
 
