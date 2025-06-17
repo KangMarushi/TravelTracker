@@ -41,8 +41,19 @@ class MapErrorBoundary extends React.Component {
 const MapContainer = ({ isTracking, currentLocation, route, onMapError }) => {
   const mapContainerRef = useRef(null);
   const mapRef = useRef(null);
-  const [isLoading, setIsLoading] = useState(true);
+  const markerRef = useRef(null);
+  const [isInitialLoading, setIsInitialLoading] = useState(true);
   const [error, setError] = useState(null);
+
+  const createMarkerElement = (emoji) => {
+    const el = document.createElement('div');
+    el.className = 'marker';
+    el.style.fontSize = '24px';
+    el.style.textAlign = 'center';
+    el.style.transform = 'translate(-50%, -50%)';
+    el.innerHTML = emoji;
+    return el;
+  };
 
   const initializeMap = useCallback(() => {
     if (!mapContainerRef.current || mapRef.current) return;
@@ -55,7 +66,7 @@ const MapContainer = ({ isTracking, currentLocation, route, onMapError }) => {
       return;
     }
 
-    setIsLoading(true);
+    setIsInitialLoading(true);
     setError(null);
 
     try {
@@ -70,7 +81,7 @@ const MapContainer = ({ isTracking, currentLocation, route, onMapError }) => {
 
       map.on('load', () => {
         console.log('Map loaded successfully');
-        setIsLoading(false);
+        setIsInitialLoading(false);
         mapRef.current = map;
 
         // Add navigation controls after map is loaded
@@ -78,6 +89,17 @@ const MapContainer = ({ isTracking, currentLocation, route, onMapError }) => {
         map.addControl(new maplibregl.AttributionControl({
           compact: true
         }));
+
+        // Initialize marker if we have a location
+        if (currentLocation) {
+          const { latitude, longitude } = currentLocation;
+          markerRef.current = new maplibregl.Marker({
+            element: createMarkerElement('🚶'),
+            anchor: 'bottom'
+          })
+            .setLngLat([longitude, latitude])
+            .addTo(map);
+        }
       });
 
       map.on('error', (e) => {
@@ -85,16 +107,16 @@ const MapContainer = ({ isTracking, currentLocation, route, onMapError }) => {
         const error = new Error('Failed to load map');
         setError(error);
         onMapError(error);
-        setIsLoading(false);
+        setIsInitialLoading(false);
       });
 
     } catch (error) {
       console.error('Map initialization error:', error);
       setError(error);
       onMapError(error);
-      setIsLoading(false);
+      setIsInitialLoading(false);
     }
-  }, [onMapError]);
+  }, [onMapError, currentLocation]);
 
   // Initialize map on mount
   useEffect(() => {
@@ -107,26 +129,34 @@ const MapContainer = ({ isTracking, currentLocation, route, onMapError }) => {
     };
   }, [initializeMap]);
 
-  // Update map when tracking starts or location changes
+  // Update marker and map when location changes
   useEffect(() => {
     if (!mapRef.current || !currentLocation) return;
 
     const { latitude, longitude } = currentLocation;
     
-    // Ensure the map is loaded before trying to update it
-    if (!mapRef.current.loaded()) {
-      mapRef.current.once('load', () => {
-        mapRef.current.flyTo({
-          center: [longitude, latitude],
-          zoom: 15,
-          essential: true
-        });
-      });
-    } else {
+    // Update or create marker
+    if (markerRef.current) {
+      markerRef.current.setLngLat([longitude, latitude]);
+    } else if (mapRef.current.loaded()) {
+      markerRef.current = new maplibregl.Marker({
+        element: createMarkerElement('🚶'),
+        anchor: 'bottom'
+      })
+        .setLngLat([longitude, latitude])
+        .addTo(mapRef.current);
+    }
+
+    // Update map view
+    if (mapRef.current.loaded()) {
+      const currentZoom = mapRef.current.getZoom();
+      const targetZoom = isTracking ? 15 : Math.max(currentZoom, 12);
+      
       mapRef.current.flyTo({
         center: [longitude, latitude],
-        zoom: 15,
-        essential: true
+        zoom: targetZoom,
+        essential: true,
+        duration: 1000
       });
     }
   }, [isTracking, currentLocation]);
@@ -180,14 +210,15 @@ const MapContainer = ({ isTracking, currentLocation, route, onMapError }) => {
         }
       });
 
-      // Fit map to route bounds
+      // Fit map to route bounds with padding
       const bounds = coordinates.reduce((bounds, coord) => {
         return bounds.extend(coord);
       }, new maplibregl.LngLatBounds(coordinates[0], coordinates[0]));
 
       mapRef.current.fitBounds(bounds, {
-        padding: 50,
-        duration: 1000
+        padding: { top: 50, bottom: 50, left: 50, right: 50 },
+        duration: 1000,
+        maxZoom: 15
       });
     }
   }, [route]);
@@ -203,7 +234,7 @@ const MapContainer = ({ isTracking, currentLocation, route, onMapError }) => {
       bg="gray.50"
       style={{ minHeight: '400px' }}
     >
-      {isLoading && (
+      {isInitialLoading && (
         <Center position="absolute" top={0} left={0} right={0} bottom={0} bg="white" zIndex={1}>
           <VStack spacing={4}>
             <Spinner size="xl" color="blue.500" />
