@@ -1,49 +1,12 @@
-import React, { useRef, useEffect, useState, useCallback } from 'react';
-import { Box, Center, Spinner, Text, Button, VStack } from '@chakra-ui/react';
+import React, { useRef, useEffect, useCallback } from 'react';
+import { Box, Center, Text, Button, VStack } from '@chakra-ui/react';
 import maplibregl from 'maplibre-gl';
 import 'maplibre-gl/dist/maplibre-gl.css';
-
-class MapErrorBoundary extends React.Component {
-  constructor(props) {
-    super(props);
-    this.state = { hasError: false, error: null };
-  }
-
-  static getDerivedStateFromError(error) {
-    return { hasError: true, error };
-  }
-
-  componentDidCatch(error, errorInfo) {
-    console.error('Map error:', error, errorInfo);
-  }
-
-  render() {
-    if (this.state.hasError) {
-      return (
-        <Center height="400px" bg="white" borderRadius="md" boxShadow="md">
-          <VStack spacing={4}>
-            <Text color="red.500">Something went wrong with the map.</Text>
-            <Button
-              colorScheme="blue"
-              onClick={() => this.setState({ hasError: false, error: null })}
-            >
-              Retry
-            </Button>
-          </VStack>
-        </Center>
-      );
-    }
-
-    return this.props.children;
-  }
-}
 
 const MapContainer = ({ isTracking, currentLocation, route, onMapError }) => {
   const mapContainerRef = useRef(null);
   const mapRef = useRef(null);
   const markerRef = useRef(null);
-  const [isInitialLoading, setIsInitialLoading] = useState(true);
-  const [error, setError] = useState(null);
 
   const createMarkerElement = (emoji) => {
     const el = document.createElement('div');
@@ -60,14 +23,9 @@ const MapContainer = ({ isTracking, currentLocation, route, onMapError }) => {
 
     const apiKey = import.meta.env.VITE_MAPTILER_API_KEY;
     if (!apiKey) {
-      const error = new Error('MapTiler API key is not configured');
-      setError(error);
-      onMapError(error);
+      onMapError(new Error('MapTiler API key is not configured'));
       return;
     }
-
-    setIsInitialLoading(true);
-    setError(null);
 
     try {
       const map = new maplibregl.Map({
@@ -81,7 +39,6 @@ const MapContainer = ({ isTracking, currentLocation, route, onMapError }) => {
 
       map.on('load', () => {
         console.log('Map loaded successfully');
-        setIsInitialLoading(false);
         mapRef.current = map;
 
         // Add navigation controls after map is loaded
@@ -104,17 +61,12 @@ const MapContainer = ({ isTracking, currentLocation, route, onMapError }) => {
 
       map.on('error', (e) => {
         console.error('Map error:', e);
-        const error = new Error('Failed to load map');
-        setError(error);
-        onMapError(error);
-        setIsInitialLoading(false);
+        onMapError(new Error('Failed to load map'));
       });
 
     } catch (error) {
       console.error('Map initialization error:', error);
-      setError(error);
       onMapError(error);
-      setIsInitialLoading(false);
     }
   }, [onMapError, currentLocation]);
 
@@ -233,26 +185,7 @@ const MapContainer = ({ isTracking, currentLocation, route, onMapError }) => {
       flexDirection="column"
       bg="gray.50"
       style={{ minHeight: '400px' }}
-    >
-      {isInitialLoading && (
-        <Center position="absolute" top={0} left={0} right={0} bottom={0} bg="white" zIndex={1}>
-          <VStack spacing={4}>
-            <Spinner size="xl" color="blue.500" />
-            <Text>Loading map...</Text>
-          </VStack>
-        </Center>
-      )}
-      {error && (
-        <Center position="absolute" top={0} left={0} right={0} bottom={0} bg="white" zIndex={1}>
-          <VStack spacing={4}>
-            <Text color="red.500">{error.message}</Text>
-            <Button onClick={initializeMap} colorScheme="blue">
-              Retry
-            </Button>
-          </VStack>
-        </Center>
-      )}
-    </Box>
+    />
   );
 };
 

@@ -44,19 +44,30 @@ function App() {
   const handleSaveTrip = async (tripData) => {
     setIsSaving(true);
     try {
+      // Log the data being sent to Supabase
+      console.log('Saving trip data:', tripData);
+
+      const tripToSave = {
+        name: tripData.name,
+        notes: tripData.notes,
+        stats: tripData.stats,
+        route: tripData.route, // Fix: Use tripData.route instead of tripData.stats.route
+        created_at: new Date().toISOString(),
+      };
+
+      console.log('Formatted trip data:', tripToSave);
+
       const { data, error } = await supabase
         .from('trips')
-        .insert([
-          {
-            name: tripData.name,
-            notes: tripData.notes,
-            stats: tripData.stats,
-            route: tripData.stats.route,
-            created_at: new Date().toISOString(),
-          }
-        ]);
+        .insert([tripToSave])
+        .select();
 
-      if (error) throw error;
+      if (error) {
+        console.error('Supabase error:', error);
+        throw error;
+      }
+
+      console.log('Saved trip data:', data);
 
       toast({
         title: 'Success',
@@ -71,7 +82,7 @@ function App() {
       console.error('Error saving trip:', error);
       toast({
         title: 'Error',
-        description: 'Failed to save trip. Please try again.',
+        description: error.message || 'Failed to save trip. Please try again.',
         status: 'error',
         duration: 5000,
         isClosable: true,
