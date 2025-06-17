@@ -51,17 +51,91 @@ function App() {
   const [currentLocation, setCurrentLocation] = useState(null)
   const currentLocationMarkerRef = useRef(null)
   const currentLocationLayerId = 'current-location'
+  const [isTrackingInterrupted, setIsTrackingInterrupted] = useState(false)
+  const lastUpdateTimeRef = useRef(null)
+
+  // Add beforeunload handler
+  useEffect(() => {
+    const handleBeforeUnload = (e) => {
+      if (isTracking) {
+        // Stop tracking when page is closed/refreshed
+        if (watchIdRef.current) {
+          navigator.geolocation.clearWatch(watchIdRef.current)
+          watchIdRef.current = null
+        }
+        clearInterval(timerRef.current)
+        // Mark tracking as interrupted
+        localStorage.setItem('trackingInterrupted', 'true')
+        localStorage.setItem('lastUpdateTime', new Date().toISOString())
+      }
+    }
+
+    window.addEventListener('beforeunload', handleBeforeUnload)
+    return () => {
+      window.removeEventListener('beforeunload', handleBeforeUnload)
+    }
+  }, [isTracking])
+
+  // Check for interrupted tracking on load
+  useEffect(() => {
+    const wasInterrupted = localStorage.getItem('trackingInterrupted') === 'true'
+    const lastUpdateTime = localStorage.getItem('lastUpdateTime')
+    
+    if (wasInterrupted) {
+      setIsTrackingInterrupted(true)
+      // Clear the interrupted state
+      localStorage.removeItem('trackingInterrupted')
+      localStorage.removeItem('lastUpdateTime')
+      
+      // Show a toast notification
+      toast({
+        title: 'Tracking Interrupted',
+        description: 'Your previous tracking session was interrupted. Please start a new trip.',
+        status: 'warning',
+        duration: 5000,
+        isClosable: true,
+      })
+    }
+  }, [])
 
   // Restore trip state from localStorage on page load
   useEffect(() => {
     const savedTrip = localStorage.getItem('currentTrip')
     if (savedTrip) {
-      const { isTracking, route, startTime, lastRecordedPoint: savedLastPoint, currentLocation: savedLocation } = JSON.parse(savedTrip)
+      const { 
+        isTracking, 
+        route, 
+        startTime, 
+        lastRecordedPoint: savedLastPoint, 
+        currentLocation: savedLocation,
+        lastUpdateTime: savedLastUpdateTime 
+      } = JSON.parse(savedTrip)
+
+      // Check if the tracking was interrupted
+      const lastUpdate = savedLastUpdateTime ? new Date(savedLastUpdateTime) : null
+      const now = new Date()
+      const timeSinceLastUpdate = lastUpdate ? now - lastUpdate : 0
+
+      // If it's been more than 30 seconds since the last update, consider it interrupted
+      if (timeSinceLastUpdate > 30000) {
+        setIsTrackingInterrupted(true)
+        localStorage.removeItem('currentTrip')
+        toast({
+          title: 'Tracking Interrupted',
+          description: 'Your previous tracking session was interrupted. Please start a new trip.',
+          status: 'warning',
+          duration: 5000,
+          isClosable: true,
+        })
+        return
+      }
+
       setIsTracking(isTracking)
       setRoute(route)
       setStartTime(startTime ? new Date(startTime) : null)
       setLastRecordedPoint(savedLastPoint)
       setCurrentLocation(savedLocation)
+      lastUpdateTimeRef.current = savedLastUpdateTime ? new Date(savedLastUpdateTime) : null
       
       if (isTracking && startTime) {
         setElapsed(Math.floor((new Date() - new Date(startTime)) / 1000))
@@ -79,6 +153,9 @@ function App() {
                 lng: position.coords.longitude,
                 timestamp: new Date().toISOString()
               }
+
+              // Update last update time
+              lastUpdateTimeRef.current = new Date()
 
               // Always update current location marker
               setCurrentLocation(newPoint)
@@ -116,7 +193,8 @@ function App() {
         route,
         startTime: startTime ? startTime.toISOString() : null,
         lastRecordedPoint,
-        currentLocation
+        currentLocation,
+        lastUpdateTime: lastUpdateTimeRef.current ? lastUpdateTimeRef.current.toISOString() : null
       }))
     } else {
       localStorage.removeItem('currentTrip')
@@ -126,27 +204,24 @@ function App() {
   // Initialize map with error handling
   useEffect(() => {
     if (!mapContainer.current) return
-    if (mapRef.current) return // Only initialize once
 
-    try {
-      setMapLoading(true)
-      setMapError(null)
-      
-      // Wait for the container to be ready
-      setTimeout(() => {
-        if (!mapContainer.current) return
-        
-        mapRef.current = new maplibregl.Map({
+    setMapLoading(true)
+    setMapError(null)
+
+    // Add a small delay to ensure the container is ready
+    const timer = setTimeout(() => {
+      try {
+        const map = new maplibregl.Map({
           container: mapContainer.current,
-          style: `https://api.maptiler.com/maps/streets/style.json?key=${MAPTILER_KEY}`,
-          center: [78.68, 10.79], // Default to Trichy
-          zoom: 10,
+          style: `https://api.maptiler.com/maps/streets-v2/style.json?key=${MAPTILER_KEY}`,
+          center: [78.6937, 10.7905], // Trichy coordinates
+          zoom: 13
         })
 
-        mapRef.current.on('load', () => {
+        map.on('load', () => {
           setMapLoading(false)
           // Add current location marker source and layer
-          mapRef.current.addSource(currentLocationLayerId, {
+          map.addSource(currentLocationLayerId, {
             type: 'geojson',
             data: {
               type: 'Feature',
@@ -157,36 +232,40 @@ function App() {
             }
           })
 
-          mapRef.current.addLayer({
+          map.addLayer({
             id: currentLocationLayerId,
             type: 'symbol',
             source: currentLocationLayerId,
             layout: {
               'text-field': '🚶',
               'text-size': 24,
-              'text-allow-overlap': true
+              'text-allow-overlap': true,
+              'text-ignore-placement': true,
+              'text-anchor': 'center'
             }
           })
+
+          // Store map reference
+          mapRef.current = map
         })
 
-        mapRef.current.on('error', (e) => {
+        map.on('error', (e) => {
           console.error('Map error:', e)
-          setMapError('Failed to load map. Please refresh the page.')
+          setMapError('Failed to load map. Please try refreshing the page.')
           setMapLoading(false)
         })
-      }, 100) // Small delay to ensure container is ready
-    } catch (error) {
-      console.error('Map initialization error:', error)
-      setMapError('Failed to initialize map. Please refresh the page.')
-      setMapLoading(false)
-    }
 
-    return () => {
-      if (mapRef.current) {
-        mapRef.current.remove()
-        mapRef.current = null
+        return () => {
+          map.remove()
+        }
+      } catch (error) {
+        console.error('Map initialization error:', error)
+        setMapError('Failed to initialize map. Please try refreshing the page.')
+        setMapLoading(false)
       }
-    }
+    }, 100)
+
+    return () => clearTimeout(timer)
   }, [])
 
   // Update map with route and marker
@@ -236,24 +315,39 @@ function App() {
     }
   }, [route])
 
-  // Update current location marker
+  // Update current location marker with improved error handling
   useEffect(() => {
     if (!mapRef.current || !currentLocation) return
 
-    const source = mapRef.current.getSource(currentLocationLayerId)
-    if (source) {
-      source.setData({
-        type: 'Feature',
-        geometry: {
-          type: 'Point',
-          coordinates: [currentLocation.lng, currentLocation.lat]
+    try {
+      const source = mapRef.current.getSource(currentLocationLayerId)
+      if (source) {
+        source.setData({
+          type: 'Feature',
+          geometry: {
+            type: 'Point',
+            coordinates: [currentLocation.lng, currentLocation.lat]
+          }
+        })
+
+        // Center map on current location if it's the first point
+        if (route.length === 1) {
+          mapRef.current.flyTo({
+            center: [currentLocation.lng, currentLocation.lat],
+            zoom: 15,
+            duration: 2000
+          })
         }
-      })
+      }
+    } catch (error) {
+      console.error('Error updating location marker:', error)
     }
-  }, [currentLocation])
+  }, [currentLocation, route.length])
 
   // Improved: Start trip recording
   const handleStart = () => {
+    // Reset interrupted state
+    setIsTrackingInterrupted(false)
     setIsTracking(true)
     setRoute([])
     setGeoError(null)
@@ -262,54 +356,89 @@ function App() {
     const now = new Date()
     setStartTime(now)
     setElapsed(0)
+    lastUpdateTimeRef.current = now
     
     // Timer for elapsed time
     timerRef.current = setInterval(() => {
       setElapsed(Math.floor((new Date() - now) / 1000))
     }, 1000)
 
-    // Start watching position
+    // Start watching position with improved error handling
     if (navigator.geolocation) {
-      watchIdRef.current = navigator.geolocation.watchPosition(
+      // First get a quick initial position
+      navigator.geolocation.getCurrentPosition(
         (position) => {
-          const newPoint = {
+          const initialPoint = {
             lat: position.coords.latitude,
             lng: position.coords.longitude,
             timestamp: new Date().toISOString()
           }
+          setCurrentLocation(initialPoint)
+          setRoute([initialPoint])
+          setLastRecordedPoint(initialPoint)
+          lastUpdateTimeRef.current = new Date()
 
-          // Always update current location marker
-          setCurrentLocation(newPoint)
+          // Then start continuous watching
+          watchIdRef.current = navigator.geolocation.watchPosition(
+            (position) => {
+              const newPoint = {
+                lat: position.coords.latitude,
+                lng: position.coords.longitude,
+                timestamp: new Date().toISOString()
+              }
 
-          // If this is the first point or distance > 100m, record it
-          if (!lastRecordedPoint || 
-              calculateDistance(
-                lastRecordedPoint.lat, 
-                lastRecordedPoint.lng, 
-                newPoint.lat, 
-                newPoint.lng
-              ) > 100) {
-            setRoute(prevRoute => [...prevRoute, newPoint])
-            setLastRecordedPoint(newPoint)
-          }
+              // Update last update time
+              lastUpdateTimeRef.current = new Date()
+
+              // Always update current location marker
+              setCurrentLocation(newPoint)
+
+              // If this is the first point or distance > 100m, record it
+              if (!lastRecordedPoint || 
+                  calculateDistance(
+                    lastRecordedPoint.lat, 
+                    lastRecordedPoint.lng, 
+                    newPoint.lat, 
+                    newPoint.lng
+                  ) > 100) {
+                setRoute(prevRoute => [...prevRoute, newPoint])
+                setLastRecordedPoint(newPoint)
+              }
+            },
+            (error) => {
+              console.error('Geolocation error:', error)
+              setGeoError(`Location error: ${error.message}. Please ensure location services are enabled.`)
+            },
+            {
+              enableHighAccuracy: true,
+              maximumAge: 0,
+              timeout: 10000 // Increased timeout to 10 seconds
+            }
+          )
         },
         (error) => {
-          setGeoError(error.message)
+          console.error('Initial geolocation error:', error)
+          setGeoError(`Initial location error: ${error.message}. Please ensure location services are enabled.`)
+          setIsTracking(false)
+          clearInterval(timerRef.current)
         },
         {
           enableHighAccuracy: true,
           maximumAge: 0,
-          timeout: 5000
+          timeout: 10000 // Increased timeout to 10 seconds
         }
       )
     } else {
       setGeoError('Geolocation is not supported by your browser.')
+      setIsTracking(false)
+      clearInterval(timerRef.current)
     }
   }
 
   // Stop trip recording
   const handleStop = () => {
     setIsTracking(false)
+    setIsTrackingInterrupted(false)
     clearInterval(timerRef.current)
     if (watchIdRef.current) {
       navigator.geolocation.clearWatch(watchIdRef.current)
@@ -317,6 +446,8 @@ function App() {
     }
     setCurrentLocation(null)
     localStorage.removeItem('currentTrip')
+    localStorage.removeItem('trackingInterrupted')
+    localStorage.removeItem('lastUpdateTime')
     setShowSave(true)
   }
 
