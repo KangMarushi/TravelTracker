@@ -66,6 +66,8 @@ function App() {
   const GEOCODE_INTERVAL = 50000 // Only geocode every 50 seconds
   const [showSummary, setShowSummary] = useState(false)
   const [tripStats, setTripStats] = useState(null)
+  const summaryMapRef = useRef(null)
+  const summaryMapContainerRef = useRef(null)
 
   // Add beforeunload handler
   useEffect(() => {
@@ -727,86 +729,159 @@ function App() {
   }, [showTripModal, selectedTrip])
 
   // Trip Summary Modal
-  const TripSummaryModal = () => (
-    <Modal isOpen={showSummary} onClose={() => setShowSummary(false)} size="xl">
-      <ModalOverlay />
-      <ModalContent>
-        <ModalHeader>Trip Summary</ModalHeader>
-        <ModalCloseButton />
-        <ModalBody>
-          <VStack spacing={4} align="stretch">
-            {/* Stats Grid */}
-            <SimpleGrid columns={3} spacing={4}>
-              <Stat>
-                <StatLabel>Distance</StatLabel>
-                <StatNumber>{tripStats?.distance} km</StatNumber>
-              </Stat>
-              <Stat>
-                <StatLabel>Duration</StatLabel>
-                <StatNumber>{tripStats?.duration} hrs</StatNumber>
-              </Stat>
-              <Stat>
-                <StatLabel>Avg Speed</StatLabel>
-                <StatNumber>{tripStats?.avgSpeed} km/h</StatNumber>
-              </Stat>
-            </SimpleGrid>
+  const TripSummaryModal = () => {
+    // Initialize summary map when modal opens
+    useEffect(() => {
+      if (showSummary && tripStats && !summaryMapRef.current) {
+        const map = new maplibregl.Map({
+          container: summaryMapContainerRef.current,
+          style: `https://api.maptiler.com/maps/streets-v2/style.json?key=${MAPTILER_KEY}`,
+          center: [tripStats.startPoint.lng, tripStats.startPoint.lat],
+          zoom: 13
+        })
 
-            {/* Route Map */}
-            <Box h="300px" position="relative" borderRadius="lg" overflow="hidden">
-              <MapContainer
-                center={[tripStats?.startPoint.lat, tripStats?.startPoint.lng]}
-                zoom={13}
-                style={{ height: '100%', width: '100%' }}
-              >
-                <TileLayer
-                  url={`https://api.maptiler.com/maps/streets-v2/{z}/{x}/{y}.png?key=${MAPTILER_KEY}`}
-                />
-                <Polyline
-                  positions={tripStats?.route.map(point => [point.lat, point.lng])}
-                  color="#3182CE"
-                  weight={3}
-                />
-                {/* Start Marker */}
-                <Marker position={[tripStats?.startPoint.lat, tripStats?.startPoint.lng]}>
-                  <Popup>Start Point</Popup>
-                </Marker>
-                {/* End Marker */}
-                <Marker position={[tripStats?.endPoint.lat, tripStats?.endPoint.lng]}>
-                  <Popup>End Point</Popup>
-                </Marker>
-              </MapContainer>
-            </Box>
+        map.on('load', () => {
+          // Add route line
+          map.addSource('route', {
+            type: 'geojson',
+            data: {
+              type: 'Feature',
+              properties: {},
+              geometry: {
+                type: 'LineString',
+                coordinates: tripStats.route.map(point => [point.lng, point.lat])
+              }
+            }
+          })
 
-            {/* Start & End Points */}
-            <VStack align="stretch" spacing={2}>
-              <Box>
-                <Text fontWeight="bold">Start Point:</Text>
-                <Text>{tripStats?.startPoint.address || 'Loading...'}</Text>
-                <Text fontSize="sm" color="gray.500">
-                  Lat: {tripStats?.startPoint.lat.toFixed(6)}, Lng: {tripStats?.startPoint.lng.toFixed(6)}
-                </Text>
+          map.addLayer({
+            id: 'route',
+            type: 'line',
+            source: 'route',
+            layout: {
+              'line-join': 'round',
+              'line-cap': 'round'
+            },
+            paint: {
+              'line-color': '#3182CE',
+              'line-width': 3
+            }
+          })
+
+          // Add start marker
+          map.addSource('start', {
+            type: 'geojson',
+            data: {
+              type: 'Feature',
+              geometry: {
+                type: 'Point',
+                coordinates: [tripStats.startPoint.lng, tripStats.startPoint.lat]
+              }
+            }
+          })
+
+          map.addLayer({
+            id: 'start',
+            type: 'circle',
+            source: 'start',
+            paint: {
+              'circle-radius': 8,
+              'circle-color': '#48BB78'
+            }
+          })
+
+          // Add end marker
+          map.addSource('end', {
+            type: 'geojson',
+            data: {
+              type: 'Feature',
+              geometry: {
+                type: 'Point',
+                coordinates: [tripStats.endPoint.lng, tripStats.endPoint.lat]
+              }
+            }
+          })
+
+          map.addLayer({
+            id: 'end',
+            type: 'circle',
+            source: 'end',
+            paint: {
+              'circle-radius': 8,
+              'circle-color': '#E53E3E'
+            }
+          })
+        })
+
+        summaryMapRef.current = map
+
+        return () => {
+          map.remove()
+          summaryMapRef.current = null
+        }
+      }
+    }, [showSummary, tripStats])
+
+    return (
+      <Modal isOpen={showSummary} onClose={() => setShowSummary(false)} size="xl">
+        <ModalOverlay />
+        <ModalContent>
+          <ModalHeader>Trip Summary</ModalHeader>
+          <ModalCloseButton />
+          <ModalBody>
+            <VStack spacing={4} align="stretch">
+              {/* Stats Grid */}
+              <SimpleGrid columns={3} spacing={4}>
+                <Stat>
+                  <StatLabel>Distance</StatLabel>
+                  <StatNumber>{tripStats?.distance} km</StatNumber>
+                </Stat>
+                <Stat>
+                  <StatLabel>Duration</StatLabel>
+                  <StatNumber>{tripStats?.duration} hrs</StatNumber>
+                </Stat>
+                <Stat>
+                  <StatLabel>Avg Speed</StatLabel>
+                  <StatNumber>{tripStats?.avgSpeed} km/h</StatNumber>
+                </Stat>
+              </SimpleGrid>
+
+              {/* Route Map */}
+              <Box h="300px" position="relative" borderRadius="lg" overflow="hidden">
+                <div ref={summaryMapContainerRef} style={{ width: '100%', height: '100%' }} />
               </Box>
-              <Box>
-                <Text fontWeight="bold">End Point:</Text>
-                <Text>{tripStats?.endPoint.address || 'Loading...'}</Text>
-                <Text fontSize="sm" color="gray.500">
-                  Lat: {tripStats?.endPoint.lat.toFixed(6)}, Lng: {tripStats?.endPoint.lng.toFixed(6)}
-                </Text>
-              </Box>
+
+              {/* Start & End Points */}
+              <VStack align="stretch" spacing={2}>
+                <Box>
+                  <Text fontWeight="bold">Start Point:</Text>
+                  <Text>{tripStats?.startPoint.address || 'Loading...'}</Text>
+                  <Text fontSize="sm" color="gray.500">
+                    Lat: {tripStats?.startPoint.lat.toFixed(6)}, Lng: {tripStats?.startPoint.lng.toFixed(6)}
+                  </Text>
+                </Box>
+                <Box>
+                  <Text fontWeight="bold">End Point:</Text>
+                  <Text>{tripStats?.endPoint.address || 'Loading...'}</Text>
+                  <Text fontSize="sm" color="gray.500">
+                    Lat: {tripStats?.endPoint.lat.toFixed(6)}, Lng: {tripStats?.endPoint.lng.toFixed(6)}
+                  </Text>
+                </Box>
+              </VStack>
             </VStack>
-          </VStack>
-        </ModalBody>
-        <ModalFooter>
-          <Button colorScheme="blue" mr={3} onClick={() => setShowSave(true)}>
-            Save Trip
-          </Button>
-          <Button variant="ghost" onClick={() => setShowSummary(false)}>
-            Close
-          </Button>
-        </ModalFooter>
-      </ModalContent>
-    </Modal>
-  )
+          </ModalBody>
+          <ModalFooter>
+            <Button colorScheme="blue" mr={3} onClick={() => setShowSave(true)}>
+              Save Trip
+            </Button>
+            <Button variant="ghost" onClick={() => setShowSummary(false)}>
+              Close
+            </Button>
+          </ModalFooter>
+        </ModalContent>
+      </Modal>
+    )
+  }
 
   return (
     <ChakraProvider>
