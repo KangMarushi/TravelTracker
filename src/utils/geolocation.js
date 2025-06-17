@@ -1,6 +1,7 @@
 import { debounce } from 'lodash';
 
-// Cache for geocoding results
+// Cache for geocoding results with size limit
+const CACHE_SIZE = 100;
 const geocodeCache = new Map();
 
 const MAPTILER_KEY = import.meta.env.VITE_MAPTILER_API_KEY;
@@ -18,33 +19,45 @@ export const getAddressFromCoordinates = debounce(async (lat, lng) => {
     const response = await fetch(
       `https://api.maptiler.com/geocoding/${lng},${lat}.json?key=${MAPTILER_KEY}`
     );
+    
+    if (!response.ok) {
+      throw new Error(`Geocoding API error: ${response.status}`);
+    }
+    
     const data = await response.json();
     
     if (data.features && data.features.length > 0) {
       const address = data.features[0].place_name;
+      
+      // Manage cache size
+      if (geocodeCache.size >= CACHE_SIZE) {
+        const firstKey = geocodeCache.keys().next().value;
+        geocodeCache.delete(firstKey);
+      }
+      
       // Cache the result
       geocodeCache.set(cacheKey, address);
       return address;
     }
-    return null;
+    return 'Unknown location';
   } catch (error) {
     console.error('Error getting address:', error);
-    return null;
+    return 'Location unavailable';
   }
-}, 1000); // Debounce for 1 second
+}, 1000);
 
 // Calculate distance between two points using Haversine formula
-export const calculateDistance = (lat1, lon1, lat2, lon2) => {
+export const calculateDistance = (point1, point2) => {
   const R = 6371e3; // Earth's radius in meters
-  const φ1 = lat1 * Math.PI/180;
-  const φ2 = lat2 * Math.PI/180;
-  const Δφ = (lat2-lat1) * Math.PI/180;
-  const Δλ = (lon2-lon1) * Math.PI/180;
+  const φ1 = (point1[0] * Math.PI) / 180;
+  const φ2 = (point2[0] * Math.PI) / 180;
+  const Δφ = ((point2[0] - point1[0]) * Math.PI) / 180;
+  const Δλ = ((point2[1] - point1[1]) * Math.PI) / 180;
 
-  const a = Math.sin(Δφ/2) * Math.sin(Δφ/2) +
-          Math.cos(φ1) * Math.cos(φ2) *
-          Math.sin(Δλ/2) * Math.sin(Δλ/2);
-  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+  const a =
+    Math.sin(Δφ / 2) * Math.sin(Δφ / 2) +
+    Math.cos(φ1) * Math.cos(φ2) * Math.sin(Δλ / 2) * Math.sin(Δλ / 2);
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 
   return R * c; // Distance in meters
 };
@@ -54,7 +67,7 @@ export const calculateTripStats = (route, startTime) => {
   if (!route || route.length === 0) {
     return {
       distance: 0,
-      duration: '0:00',
+      duration: '00:00:00',
       averageSpeed: 0,
       maxSpeed: 0,
       elevationGain: 0,
@@ -75,13 +88,14 @@ export const calculateTripStats = (route, startTime) => {
   let elevationGain = 0;
   let elevationLoss = 0;
   let maxSpeed = 0;
+  let speeds = [];
 
   for (let i = 1; i < route.length; i++) {
     const from = route[i - 1];
     const to = route[i];
     
     // Calculate distance
-    const distance = calculateDistance(from.lat, from.lng, to.lat, to.lng);
+    const distance = calculateDistance(from, to);
     totalDistance += distance;
 
     // Calculate elevation changes
@@ -98,18 +112,21 @@ export const calculateTripStats = (route, startTime) => {
     const timeDiff = (new Date(to.timestamp) - new Date(from.timestamp)) / 1000; // in seconds
     if (timeDiff > 0) {
       const speed = (distance / 1000) / (timeDiff / 3600); // km/h
+      speeds.push(speed);
       maxSpeed = Math.max(maxSpeed, speed);
     }
   }
 
   // Calculate average speed in km/h
-  const averageSpeed = durationHours > 0 ? (totalDistance / 1000) / durationHours : 0;
+  const averageSpeed = speeds.length > 0 
+    ? speeds.reduce((a, b) => a + b, 0) / speeds.length 
+    : 0;
 
   // Format duration as HH:MM:SS
   const hours = Math.floor(durationMs / (1000 * 60 * 60));
   const minutes = Math.floor((durationMs % (1000 * 60 * 60)) / (1000 * 60));
   const seconds = Math.floor((durationMs % (1000 * 60)) / 1000);
-  const duration = `${hours}:${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
+  const duration = `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
 
   return {
     distance: totalDistance / 1000, // Convert to kilometers

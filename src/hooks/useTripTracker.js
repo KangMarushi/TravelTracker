@@ -1,8 +1,9 @@
 import { useState, useRef, useEffect } from 'react';
 import { calculateDistance, calculateTripStats } from '../utils/geolocation';
 
-export const useTripTracker = (settings) => {
+export const useTripTracker = ({ recordingMode, recordingInterval, recordingDistance, onError }) => {
   const [isTracking, setIsTracking] = useState(false);
+  const [isPaused, setIsPaused] = useState(false);
   const [route, setRoute] = useState([]);
   const [startTime, setStartTime] = useState(null);
   const [elapsed, setElapsed] = useState(0);
@@ -13,16 +14,27 @@ export const useTripTracker = (settings) => {
   const watchIdRef = useRef(null);
   const timerRef = useRef(null);
   const lastRecordingTimeRef = useRef(null);
+  const pauseStartTimeRef = useRef(null);
+  const totalPausedTimeRef = useRef(0);
 
   const startTracking = () => {
+    if (!navigator.geolocation) {
+      onError?.(new Error('Geolocation is not supported by your browser'));
+      return;
+    }
+
     setIsTracking(true);
+    setIsPaused(false);
     const now = new Date();
     setStartTime(now);
     setElapsed(0);
     lastRecordingTimeRef.current = now.getTime();
+    totalPausedTimeRef.current = 0;
 
     timerRef.current = setInterval(() => {
-      setElapsed(Math.floor((new Date() - now) / 1000));
+      const currentTime = new Date();
+      const pausedTime = totalPausedTimeRef.current;
+      setElapsed(Math.floor((currentTime - now - pausedTime) / 1000));
     }, 1000);
 
     startLocationTracking();
@@ -34,6 +46,8 @@ export const useTripTracker = (settings) => {
     }
     clearInterval(timerRef.current);
     setIsTracking(false);
+    setIsPaused(false);
+    totalPausedTimeRef.current = 0;
 
     if (route.length > 0) {
       const stats = calculateTripStats(route, startTime);
@@ -41,12 +55,28 @@ export const useTripTracker = (settings) => {
     }
   };
 
-  const startLocationTracking = () => {
-    if (!navigator.geolocation) {
-      console.error('Geolocation is not supported');
-      return;
+  const pauseTracking = () => {
+    if (!isTracking || isPaused) return;
+    
+    setIsPaused(true);
+    pauseStartTimeRef.current = new Date();
+    
+    if (watchIdRef.current) {
+      navigator.geolocation.clearWatch(watchIdRef.current);
     }
+  };
 
+  const resumeTracking = () => {
+    if (!isTracking || !isPaused) return;
+    
+    setIsPaused(false);
+    const pauseEndTime = new Date();
+    totalPausedTimeRef.current += pauseEndTime - pauseStartTimeRef.current;
+    
+    startLocationTracking();
+  };
+
+  const startLocationTracking = () => {
     const options = {
       enableHighAccuracy: true,
       timeout: 10000,
@@ -70,6 +100,23 @@ export const useTripTracker = (settings) => {
       },
       (error) => {
         console.error('Geolocation error:', error);
+        let errorMessage = 'Error getting location';
+        
+        switch (error.code) {
+          case error.PERMISSION_DENIED:
+            errorMessage = 'Location permission denied. Please enable location services.';
+            break;
+          case error.POSITION_UNAVAILABLE:
+            errorMessage = 'Location information is unavailable.';
+            break;
+          case error.TIMEOUT:
+            errorMessage = 'Location request timed out.';
+            break;
+          default:
+            errorMessage = 'An unknown error occurred while getting location.';
+        }
+        
+        onError?.(new Error(errorMessage));
       },
       options
     );
@@ -78,11 +125,11 @@ export const useTripTracker = (settings) => {
   const shouldRecordPoint = (newPoint, now) => {
     if (!lastRecordedPoint || !lastRecordingTimeRef.current) return true;
 
-    if (settings.recordingMode === 'time') {
-      return now - lastRecordingTimeRef.current >= settings.recordingInterval * 1000;
+    if (recordingMode === 'time') {
+      return now - lastRecordingTimeRef.current >= recordingInterval * 1000;
     } else {
       const distance = calculateDistance(lastRecordedPoint, newPoint);
-      return distance >= settings.recordingDistance;
+      return distance >= recordingDistance;
     }
   };
 
@@ -99,12 +146,15 @@ export const useTripTracker = (settings) => {
 
   return {
     isTracking,
+    isPaused,
     route,
     startTime,
     elapsed,
     currentLocation,
     tripStats,
     startTracking,
-    stopTracking
+    stopTracking,
+    pauseTracking,
+    resumeTracking
   };
 }; 
