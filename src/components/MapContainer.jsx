@@ -60,7 +60,7 @@ const MapContainer = ({
 
       const map = new maplibregl.Map({
         container: mapContainerRef.current,
-        style: `https://api.maptiler.com/maps/streets-v2/style.json?key=${process.env.REACT_APP_MAPTILER_KEY}`,
+        style: `https://api.maptiler.com/maps/streets-v2/style.json?key=${import.meta.env.VITE_MAPTILER_API_KEY}`,
         center: [78.6937, 10.7905],
         zoom: 13,
         attributionControl: false
