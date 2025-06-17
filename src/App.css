@@ -1,23 +1,25 @@
 #root {
   width: 100%;
   min-height: 100vh;
-  margin: 0;
-  padding: 0;
-  text-align: center;
+  display: flex;
+  flex-direction: column;
 }
 
 body {
   margin: 0;
   padding: 0;
-  min-height: 100vh;
   width: 100%;
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
 }
 
 .app-container {
   width: 100%;
   min-height: 100vh;
-  padding: 1rem;
-  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  flex: 1;
 }
 
 @media (min-width: 768px) {
@@ -28,15 +30,33 @@ body {
 
 .map-container {
   width: 100%;
-  height: calc(100vh - 300px);
-  min-height: 300px;
-  margin: 1rem 0;
+  height: 100%;
+  min-height: 400px;
+  position: relative;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  background-color: #f7fafc;
+  border-radius: 8px;
+  overflow: hidden;
+  border: 1px solid #e2e8f0;
 }
 
 @media (max-width: 768px) {
   .map-container {
-    height: calc(100vh - 400px);
+    min-height: 300px;
   }
+}
+
+/* MapLibre GL specific styles */
+.maplibregl-canvas {
+  width: 100% !important;
+  height: 100% !important;
+}
+
+.maplibregl-container {
+  width: 100% !important;
+  height: 100% !important;
 }
 
 .logo {

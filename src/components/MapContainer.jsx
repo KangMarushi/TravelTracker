@@ -1,4 +1,4 @@
-import React, { useRef, useEffect, useState } from 'react';
+import React, { useRef, useEffect, useState, useCallback } from 'react';
 import { Box, Center, Spinner, Text, Button, VStack } from '@chakra-ui/react';
 import maplibregl from 'maplibre-gl';
 import 'maplibre-gl/dist/maplibre-gl.css';
@@ -38,181 +38,166 @@ class MapErrorBoundary extends React.Component {
   }
 }
 
-const MapContainer = ({ 
-  isTracking, 
-  currentLocation, 
-  route,
-  onMapLoad,
-  onMapError 
-}) => {
+const MapContainer = ({ isTracking, currentLocation, route, onMapError }) => {
   const mapContainerRef = useRef(null);
   const mapRef = useRef(null);
-  const markerRef = useRef(null);
-  const [mapLoading, setMapLoading] = useState(false);
-  const [mapError, setMapError] = useState(null);
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState(null);
 
-  const initializeMap = () => {
+  const initializeMap = useCallback(() => {
     if (!mapContainerRef.current || mapRef.current) return;
 
+    const apiKey = import.meta.env.VITE_MAPTILER_API_KEY;
+    if (!apiKey) {
+      const error = new Error('MapTiler API key is not configured');
+      setError(error);
+      onMapError(error);
+      return;
+    }
+
+    setIsLoading(true);
+    setError(null);
+
     try {
-      setMapLoading(true);
-      setMapError(null);
-
-      if (!import.meta.env.VITE_MAPTILER_API_KEY) {
-        throw new Error('MapTiler API key is not configured');
-      }
-
       const map = new maplibregl.Map({
         container: mapContainerRef.current,
-        style: `https://api.maptiler.com/maps/streets-v2/style.json?key=${import.meta.env.VITE_MAPTILER_API_KEY}`,
-        center: [78.6937, 10.7905],
-        zoom: 13,
-        attributionControl: false
+        style: `https://api.maptiler.com/maps/streets/style.json?key=${apiKey}`,
+        center: [0, 0],
+        zoom: 2,
+        attributionControl: false,
+        preserveDrawingBuffer: true
       });
-
-      map.addControl(new maplibregl.AttributionControl({
-        compact: true
-      }));
 
       map.on('load', () => {
         console.log('Map loaded successfully');
+        setIsLoading(false);
         mapRef.current = map;
-        setMapLoading(false);
-        onMapLoad?.(map);
       });
 
       map.on('error', (e) => {
         console.error('Map error:', e);
-        setMapError('Error loading map. Please check your internet connection and try again.');
-        setMapLoading(false);
-        onMapError?.(e);
+        const error = new Error('Failed to load map');
+        setError(error);
+        onMapError(error);
+        setIsLoading(false);
       });
 
-    } catch (error) {
-      console.error('Error initializing map:', error);
-      setMapError(error.message || 'Failed to initialize map. Please refresh the page and try again.');
-      setMapLoading(false);
-      onMapError?.(error);
-    }
-  };
+      // Add navigation controls
+      map.addControl(new maplibregl.NavigationControl(), 'top-right');
+      
+      // Add attribution
+      map.addControl(new maplibregl.AttributionControl({
+        compact: true
+      }));
 
+    } catch (error) {
+      console.error('Map initialization error:', error);
+      setError(error);
+      onMapError(error);
+      setIsLoading(false);
+    }
+  }, [onMapError]);
+
+  // Initialize map on mount
   useEffect(() => {
     initializeMap();
-
     return () => {
       if (mapRef.current) {
         mapRef.current.remove();
         mapRef.current = null;
       }
     };
-  }, []);
+  }, [initializeMap]);
 
+  // Update map when tracking starts or location changes
   useEffect(() => {
-    if (isTracking && mapRef.current && currentLocation) {
-      const [latitude, longitude] = currentLocation;
-      mapRef.current.setCenter([longitude, latitude]);
-      mapRef.current.setZoom(15);
-    }
+    if (!mapRef.current || !currentLocation) return;
+
+    const { latitude, longitude } = currentLocation;
+    mapRef.current.flyTo({
+      center: [longitude, latitude],
+      zoom: 15,
+      essential: true
+    });
   }, [isTracking, currentLocation]);
 
+  // Update route on map
   useEffect(() => {
-    if (mapRef.current && route.length > 0) {
-      const coordinates = route.map(point => [point[1], point[0]]);
-      
-      if (mapRef.current.getSource('route')) {
-        mapRef.current.getSource('route').setData({
-          type: 'Feature',
-          properties: {},
-          geometry: {
-            type: 'LineString',
-            coordinates
-          }
-        });
-      } else {
-        mapRef.current.addSource('route', {
-          type: 'geojson',
-          data: {
-            type: 'Feature',
-            properties: {},
-            geometry: {
-              type: 'LineString',
-              coordinates
-            }
-          }
-        });
+    if (!mapRef.current || !route || route.length === 0) return;
 
-        mapRef.current.addLayer({
-          id: 'route',
-          type: 'line',
-          source: 'route',
-          layout: {
-            'line-join': 'round',
-            'line-cap': 'round'
-          },
-          paint: {
-            'line-color': '#3B82F6',
-            'line-width': 4
-          }
-        });
-      }
+    const coordinates = route.map(point => [point.longitude, point.latitude]);
+
+    // Remove existing route layer if it exists
+    if (mapRef.current.getSource('route')) {
+      mapRef.current.removeLayer('route-line');
+      mapRef.current.removeSource('route');
     }
+
+    // Add new route layer
+    mapRef.current.addSource('route', {
+      type: 'geojson',
+      data: {
+        type: 'Feature',
+        properties: {},
+        geometry: {
+          type: 'LineString',
+          coordinates
+        }
+      }
+    });
+
+    mapRef.current.addLayer({
+      id: 'route-line',
+      type: 'line',
+      source: 'route',
+      layout: {
+        'line-join': 'round',
+        'line-cap': 'round'
+      },
+      paint: {
+        'line-color': '#4299E1',
+        'line-width': 4
+      }
+    });
+
+    // Fit map to route bounds
+    const bounds = coordinates.reduce((bounds, coord) => {
+      return bounds.extend(coord);
+    }, new maplibregl.LngLatBounds(coordinates[0], coordinates[0]));
+
+    mapRef.current.fitBounds(bounds, {
+      padding: 50,
+      duration: 1000
+    });
   }, [route]);
 
-  const createMarkerElement = (emoji) => {
-    const el = document.createElement('div');
-    el.className = 'marker';
-    el.style.fontSize = '24px';
-    el.style.textAlign = 'center';
-    el.innerHTML = emoji;
-    return el;
-  };
-
   return (
-    <MapErrorBoundary>
-      <Box 
-        height="100%"
-        width="100%"
-        position="relative" 
-        borderRadius="md" 
-        overflow="hidden"
-        boxShadow="md"
-        borderWidth={1}
-        borderColor="gray.200"
-        bg="white"
-      >
-        {mapLoading && (
-          <Center position="absolute" top={0} left={0} right={0} bottom={0} bg="white" zIndex={1}>
-            <VStack spacing={4}>
-              <Spinner size="xl" color="blue.500" thickness="4px" />
-              <Text color="gray.600">Loading map...</Text>
-            </VStack>
-          </Center>
-        )}
-        {mapError && (
-          <Center position="absolute" top={0} left={0} right={0} bottom={0} bg="white" zIndex={1}>
-            <VStack spacing={4} p={4} textAlign="center">
-              <Text color="red.500" fontWeight="medium">{mapError}</Text>
-              <Button 
-                colorScheme="blue" 
-                onClick={() => {
-                  setMapError(null);
-                  initializeMap();
-                }}
-              >
-                Retry
-              </Button>
-            </VStack>
-          </Center>
-        )}
-        <Box
-          ref={mapContainerRef}
-          height="100%"
-          width="100%"
-          display={mapLoading ? 'none' : 'block'}
-          bg="gray.50"
-        />
-      </Box>
-    </MapErrorBoundary>
+    <Box
+      ref={mapContainerRef}
+      width="100%"
+      height="100%"
+      position="relative"
+      display="flex"
+      flexDirection="column"
+      bg="gray.50"
+      style={{ minHeight: '400px' }}
+    >
+      {isLoading && (
+        <Center position="absolute" top={0} left={0} right={0} bottom={0} bg="white" zIndex={1}>
+          <Spinner size="xl" color="blue.500" />
+        </Center>
+      )}
+      {error && (
+        <Center position="absolute" top={0} left={0} right={0} bottom={0} bg="white" zIndex={1}>
+          <VStack spacing={4}>
+            <Text color="red.500">{error.message}</Text>
+            <Button onClick={initializeMap} colorScheme="blue">
+              Retry
+            </Button>
+          </VStack>
+        </Center>
+      )}
+    </Box>
   );
 };
 

@@ -17,32 +17,28 @@ export const getAddressFromCoordinates = debounce(async (lat, lng) => {
 
   try {
     const response = await fetch(
-      `https://api.maptiler.com/geocoding/${lng},${lat}.json?key=${MAPTILER_KEY}`
+      `https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lng}&zoom=18&addressdetails=1`
     );
     
     if (!response.ok) {
-      throw new Error(`Geocoding API error: ${response.status}`);
+      throw new Error('Failed to fetch address');
     }
-    
+
     const data = await response.json();
+    const address = data.display_name || 'Address unavailable';
     
-    if (data.features && data.features.length > 0) {
-      const address = data.features[0].place_name;
-      
-      // Manage cache size
-      if (geocodeCache.size >= CACHE_SIZE) {
-        const firstKey = geocodeCache.keys().next().value;
-        geocodeCache.delete(firstKey);
-      }
-      
-      // Cache the result
-      geocodeCache.set(cacheKey, address);
-      return address;
+    // Manage cache size
+    if (geocodeCache.size >= CACHE_SIZE) {
+      const firstKey = geocodeCache.keys().next().value;
+      geocodeCache.delete(firstKey);
     }
-    return 'Unknown location';
+    
+    // Cache the result
+    geocodeCache.set(cacheKey, address);
+    return address;
   } catch (error) {
     console.error('Error getting address:', error);
-    return 'Location unavailable';
+    throw error;
   }
 }, 1000);
 
@@ -167,4 +163,41 @@ export const loadSettings = () => {
     console.error('Error loading settings:', error);
     return DEFAULT_SETTINGS;
   }
+};
+
+export const getCurrentPosition = () => {
+  return new Promise((resolve, reject) => {
+    if (!navigator.geolocation) {
+      reject(new Error('Geolocation is not supported by your browser'));
+      return;
+    }
+
+    navigator.geolocation.getCurrentPosition(
+      (position) => resolve(position),
+      (error) => {
+        let errorMessage = 'Error getting location';
+        
+        switch (error.code) {
+          case error.PERMISSION_DENIED:
+            errorMessage = 'Location permission denied. Please enable location services.';
+            break;
+          case error.POSITION_UNAVAILABLE:
+            errorMessage = 'Location information is unavailable.';
+            break;
+          case error.TIMEOUT:
+            errorMessage = 'Location request timed out.';
+            break;
+          default:
+            errorMessage = 'An unknown error occurred while getting location.';
+        }
+        
+        reject(new Error(errorMessage));
+      },
+      {
+        enableHighAccuracy: true,
+        timeout: 10000,
+        maximumAge: 0
+      }
+    );
+  });
 }; 

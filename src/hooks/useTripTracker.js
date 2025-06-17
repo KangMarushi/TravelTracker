@@ -1,160 +1,188 @@
-import { useState, useRef, useEffect } from 'react';
-import { calculateDistance, calculateTripStats } from '../utils/geolocation';
+import { useState, useEffect, useCallback } from 'react';
+import { getCurrentPosition, getAddressFromCoordinates } from '../utils/geolocation';
 
-export const useTripTracker = ({ recordingMode, recordingInterval, recordingDistance, onError }) => {
+const useTripTracker = () => {
   const [isTracking, setIsTracking] = useState(false);
   const [isPaused, setIsPaused] = useState(false);
+  const [recordingMode, setRecordingMode] = useState('time');
+  const [recordingInterval, setRecordingInterval] = useState(5);
+  const [recordingDistance, setRecordingDistance] = useState(100);
+  const [currentLocation, setCurrentLocation] = useState(null);
+  const [currentAddress, setCurrentAddress] = useState('');
+  const [isLoadingAddress, setIsLoadingAddress] = useState(false);
+  const [geoError, setGeoError] = useState(null);
   const [route, setRoute] = useState([]);
   const [startTime, setStartTime] = useState(null);
   const [elapsed, setElapsed] = useState(0);
-  const [currentLocation, setCurrentLocation] = useState(null);
-  const [lastRecordedPoint, setLastRecordedPoint] = useState(null);
-  const [tripStats, setTripStats] = useState(null);
+  const [tripStats, setTripStats] = useState({
+    distance: 0,
+    duration: 0,
+    averageSpeed: 0,
+    route: []
+  });
 
-  const watchIdRef = useRef(null);
-  const timerRef = useRef(null);
-  const lastRecordingTimeRef = useRef(null);
-  const pauseStartTimeRef = useRef(null);
-  const totalPausedTimeRef = useRef(0);
-
-  const startTracking = () => {
-    if (!navigator.geolocation) {
-      onError?.(new Error('Geolocation is not supported by your browser'));
-      return;
+  // Update elapsed time
+  useEffect(() => {
+    let interval;
+    if (isTracking && !isPaused) {
+      interval = setInterval(() => {
+        setElapsed(prev => prev + 1);
+      }, 1000);
     }
+    return () => clearInterval(interval);
+  }, [isTracking, isPaused]);
 
-    setIsTracking(true);
-    setIsPaused(false);
-    const now = new Date();
-    setStartTime(now);
-    setElapsed(0);
-    lastRecordingTimeRef.current = now.getTime();
-    totalPausedTimeRef.current = 0;
-
-    timerRef.current = setInterval(() => {
-      const currentTime = new Date();
-      const pausedTime = totalPausedTimeRef.current;
-      setElapsed(Math.floor((currentTime - now - pausedTime) / 1000));
-    }, 1000);
-
-    startLocationTracking();
-  };
-
-  const stopTracking = () => {
-    if (watchIdRef.current) {
-      navigator.geolocation.clearWatch(watchIdRef.current);
+  // Update address when location changes
+  useEffect(() => {
+    if (currentLocation) {
+      setIsLoadingAddress(true);
+      getAddressFromCoordinates(currentLocation.latitude, currentLocation.longitude)
+        .then(address => {
+          setCurrentAddress(address);
+          setIsLoadingAddress(false);
+        })
+        .catch(error => {
+          console.error('Error getting address:', error);
+          setCurrentAddress('Location unavailable');
+          setIsLoadingAddress(false);
+        });
     }
-    clearInterval(timerRef.current);
+  }, [currentLocation]);
+
+  // Calculate trip stats
+  useEffect(() => {
+    if (route.length > 0) {
+      const totalDistance = route.reduce((acc, point, index) => {
+        if (index === 0) return 0;
+        const prevPoint = route[index - 1];
+        const distance = calculateDistance(
+          prevPoint.latitude,
+          prevPoint.longitude,
+          point.latitude,
+          point.longitude
+        );
+        return acc + distance;
+      }, 0);
+
+      const duration = elapsed;
+      const averageSpeed = duration > 0 ? (totalDistance / duration) * 3600 : 0; // km/h
+
+      setTripStats({
+        distance: totalDistance,
+        duration,
+        averageSpeed,
+        route
+      });
+    }
+  }, [route, elapsed]);
+
+  const startTracking = useCallback(async () => {
+    try {
+      const position = await getCurrentPosition();
+      setCurrentLocation({
+        latitude: position.coords.latitude,
+        longitude: position.coords.longitude
+      });
+      setRoute([{
+        latitude: position.coords.latitude,
+        longitude: position.coords.longitude,
+        timestamp: new Date().toISOString()
+      }]);
+      setStartTime(new Date());
+      setElapsed(0);
+      setIsTracking(true);
+      setIsPaused(false);
+      setGeoError(null);
+    } catch (error) {
+      console.error('Error starting tracking:', error);
+      setGeoError(error.message);
+    }
+  }, []);
+
+  const stopTracking = useCallback(() => {
     setIsTracking(false);
     setIsPaused(false);
-    totalPausedTimeRef.current = 0;
-
-    if (route.length > 0) {
-      const stats = calculateTripStats(route, startTime);
-      setTripStats(stats);
-    }
-  };
-
-  const pauseTracking = () => {
-    if (!isTracking || isPaused) return;
-    
-    setIsPaused(true);
-    pauseStartTimeRef.current = new Date();
-    
-    if (watchIdRef.current) {
-      navigator.geolocation.clearWatch(watchIdRef.current);
-    }
-  };
-
-  const resumeTracking = () => {
-    if (!isTracking || !isPaused) return;
-    
-    setIsPaused(false);
-    const pauseEndTime = new Date();
-    totalPausedTimeRef.current += pauseEndTime - pauseStartTimeRef.current;
-    
-    startLocationTracking();
-  };
-
-  const startLocationTracking = () => {
-    const options = {
-      enableHighAccuracy: true,
-      timeout: 10000,
-      maximumAge: 0
-    };
-
-    watchIdRef.current = navigator.geolocation.watchPosition(
-      (position) => {
-        const { latitude, longitude } = position.coords;
-        const newPoint = [latitude, longitude];
-        setCurrentLocation(newPoint);
-
-        const now = Date.now();
-        const shouldRecord = shouldRecordPoint(newPoint, now);
-
-        if (shouldRecord) {
-          setRoute(prev => [...prev, { ...newPoint, timestamp: now }]);
-          setLastRecordedPoint(newPoint);
-          lastRecordingTimeRef.current = now;
-        }
-      },
-      (error) => {
-        console.error('Geolocation error:', error);
-        let errorMessage = 'Error getting location';
-        
-        switch (error.code) {
-          case error.PERMISSION_DENIED:
-            errorMessage = 'Location permission denied. Please enable location services.';
-            break;
-          case error.POSITION_UNAVAILABLE:
-            errorMessage = 'Location information is unavailable.';
-            break;
-          case error.TIMEOUT:
-            errorMessage = 'Location request timed out.';
-            break;
-          default:
-            errorMessage = 'An unknown error occurred while getting location.';
-        }
-        
-        onError?.(new Error(errorMessage));
-      },
-      options
-    );
-  };
-
-  const shouldRecordPoint = (newPoint, now) => {
-    if (!lastRecordedPoint || !lastRecordingTimeRef.current) return true;
-
-    if (recordingMode === 'time') {
-      return now - lastRecordingTimeRef.current >= recordingInterval * 1000;
-    } else {
-      const distance = calculateDistance(lastRecordedPoint, newPoint);
-      return distance >= recordingDistance;
-    }
-  };
-
-  useEffect(() => {
-    return () => {
-      if (watchIdRef.current) {
-        navigator.geolocation.clearWatch(watchIdRef.current);
-      }
-      if (timerRef.current) {
-        clearInterval(timerRef.current);
-      }
-    };
+    setStartTime(null);
   }, []);
+
+  const pauseTracking = useCallback(() => {
+    setIsPaused(true);
+  }, []);
+
+  const resumeTracking = useCallback(() => {
+    setIsPaused(false);
+  }, []);
+
+  // Track location updates
+  useEffect(() => {
+    let watchId;
+    if (isTracking && !isPaused) {
+      watchId = navigator.geolocation.watchPosition(
+        (position) => {
+          const newLocation = {
+            latitude: position.coords.latitude,
+            longitude: position.coords.longitude,
+            timestamp: new Date().toISOString()
+          };
+          setCurrentLocation(newLocation);
+          setRoute(prev => [...prev, newLocation]);
+        },
+        (error) => {
+          console.error('Error watching position:', error);
+          setGeoError(error.message);
+        },
+        {
+          enableHighAccuracy: true,
+          maximumAge: 0,
+          timeout: 5000
+        }
+      );
+    }
+    return () => {
+      if (watchId) {
+        navigator.geolocation.clearWatch(watchId);
+      }
+    };
+  }, [isTracking, isPaused]);
 
   return {
     isTracking,
     isPaused,
-    route,
-    startTime,
-    elapsed,
+    recordingMode,
+    recordingInterval,
+    recordingDistance,
     currentLocation,
+    currentAddress,
+    isLoadingAddress,
+    geoError,
+    route,
+    elapsed,
     tripStats,
     startTracking,
     stopTracking,
     pauseTracking,
-    resumeTracking
+    resumeTracking,
+    setRecordingMode,
+    setRecordingInterval,
+    setRecordingDistance
   };
-}; 
+};
+
+// Helper function to calculate distance between two points
+function calculateDistance(lat1, lon1, lat2, lon2) {
+  const R = 6371; // Earth's radius in kilometers
+  const dLat = toRad(lat2 - lat1);
+  const dLon = toRad(lon2 - lon1);
+  const a =
+    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) *
+    Math.sin(dLon / 2) * Math.sin(dLon / 2);
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  return R * c;
+}
+
+function toRad(degrees) {
+  return degrees * (Math.PI / 180);
+}
+
+export default useTripTracker; 
