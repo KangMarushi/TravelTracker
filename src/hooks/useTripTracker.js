@@ -78,24 +78,25 @@ const useTripTracker = () => {
 
   const startTracking = useCallback(async () => {
     try {
-      const position = await getCurrentPosition();
-      setCurrentLocation({
-        latitude: position.coords.latitude,
-        longitude: position.coords.longitude
-      });
-      setRoute([{
-        latitude: position.coords.latitude,
-        longitude: position.coords.longitude,
-        timestamp: new Date().toISOString()
-      }]);
-      setStartTime(new Date());
-      setElapsed(0);
       setIsTracking(true);
       setIsPaused(false);
       setGeoError(null);
+      
+      const position = await getCurrentPosition();
+      const newLocation = {
+        latitude: position.coords.latitude,
+        longitude: position.coords.longitude,
+        timestamp: new Date().toISOString()
+      };
+      
+      setCurrentLocation(newLocation);
+      setRoute([newLocation]);
+      setStartTime(new Date());
+      setElapsed(0);
     } catch (error) {
       console.error('Error starting tracking:', error);
       setGeoError(error.message);
+      setIsTracking(false);
     }
   }, []);
 
@@ -117,6 +118,12 @@ const useTripTracker = () => {
   useEffect(() => {
     let watchId;
     if (isTracking && !isPaused) {
+      const options = {
+        enableHighAccuracy: true,
+        maximumAge: 0,
+        timeout: 30000 // Increased timeout to 30 seconds
+      };
+
       watchId = navigator.geolocation.watchPosition(
         (position) => {
           const newLocation = {
@@ -129,13 +136,25 @@ const useTripTracker = () => {
         },
         (error) => {
           console.error('Error watching position:', error);
-          setGeoError(error.message);
+          let errorMessage = 'Error getting location';
+          
+          switch (error.code) {
+            case error.PERMISSION_DENIED:
+              errorMessage = 'Location permission denied. Please enable location services.';
+              break;
+            case error.POSITION_UNAVAILABLE:
+              errorMessage = 'Location information is unavailable.';
+              break;
+            case error.TIMEOUT:
+              errorMessage = 'Location request timed out. Please try again.';
+              break;
+            default:
+              errorMessage = 'An unknown error occurred while getting location.';
+          }
+          
+          setGeoError(errorMessage);
         },
-        {
-          enableHighAccuracy: true,
-          maximumAge: 0,
-          timeout: 5000
-        }
+        options
       );
     }
     return () => {

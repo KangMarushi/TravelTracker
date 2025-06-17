@@ -7,8 +7,8 @@ const geocodeCache = new Map();
 const MAPTILER_KEY = import.meta.env.VITE_MAPTILER_API_KEY;
 
 // Debounced function to get address from coordinates
-export const getAddressFromCoordinates = debounce(async (lat, lng) => {
-  const cacheKey = `${lat},${lng}`;
+export const getAddressFromCoordinates = async (latitude, longitude) => {
+  const cacheKey = `${latitude},${longitude}`;
   
   // Check cache first
   if (geocodeCache.has(cacheKey)) {
@@ -17,7 +17,7 @@ export const getAddressFromCoordinates = debounce(async (lat, lng) => {
 
   try {
     const response = await fetch(
-      `https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lng}&zoom=18&addressdetails=1`
+      `https://nominatim.openstreetmap.org/reverse?format=json&lat=${latitude}&lon=${longitude}&zoom=18&addressdetails=1`
     );
     
     if (!response.ok) {
@@ -40,7 +40,7 @@ export const getAddressFromCoordinates = debounce(async (lat, lng) => {
     console.error('Error getting address:', error);
     throw error;
   }
-}, 1000);
+};
 
 // Calculate distance between two points using Haversine formula
 export const calculateDistance = (point1, point2) => {
@@ -185,7 +185,7 @@ export const getCurrentPosition = () => {
             errorMessage = 'Location information is unavailable.';
             break;
           case error.TIMEOUT:
-            errorMessage = 'Location request timed out.';
+            errorMessage = 'Location request timed out. Please try again.';
             break;
           default:
             errorMessage = 'An unknown error occurred while getting location.';
@@ -195,7 +195,7 @@ export const getCurrentPosition = () => {
       },
       {
         enableHighAccuracy: true,
-        timeout: 10000,
+        timeout: 30000, // Increased timeout to 30 seconds
         maximumAge: 0
       }
     );

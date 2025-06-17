@@ -72,6 +72,12 @@ const MapContainer = ({ isTracking, currentLocation, route, onMapError }) => {
         console.log('Map loaded successfully');
         setIsLoading(false);
         mapRef.current = map;
+
+        // Add navigation controls after map is loaded
+        map.addControl(new maplibregl.NavigationControl(), 'top-right');
+        map.addControl(new maplibregl.AttributionControl({
+          compact: true
+        }));
       });
 
       map.on('error', (e) => {
@@ -81,14 +87,6 @@ const MapContainer = ({ isTracking, currentLocation, route, onMapError }) => {
         onMapError(error);
         setIsLoading(false);
       });
-
-      // Add navigation controls
-      map.addControl(new maplibregl.NavigationControl(), 'top-right');
-      
-      // Add attribution
-      map.addControl(new maplibregl.AttributionControl({
-        compact: true
-      }));
 
     } catch (error) {
       console.error('Map initialization error:', error);
@@ -114,61 +112,84 @@ const MapContainer = ({ isTracking, currentLocation, route, onMapError }) => {
     if (!mapRef.current || !currentLocation) return;
 
     const { latitude, longitude } = currentLocation;
-    mapRef.current.flyTo({
-      center: [longitude, latitude],
-      zoom: 15,
-      essential: true
-    });
+    
+    // Ensure the map is loaded before trying to update it
+    if (!mapRef.current.loaded()) {
+      mapRef.current.once('load', () => {
+        mapRef.current.flyTo({
+          center: [longitude, latitude],
+          zoom: 15,
+          essential: true
+        });
+      });
+    } else {
+      mapRef.current.flyTo({
+        center: [longitude, latitude],
+        zoom: 15,
+        essential: true
+      });
+    }
   }, [isTracking, currentLocation]);
 
   // Update route on map
   useEffect(() => {
     if (!mapRef.current || !route || route.length === 0) return;
 
-    const coordinates = route.map(point => [point.longitude, point.latitude]);
-
-    // Remove existing route layer if it exists
-    if (mapRef.current.getSource('route')) {
-      mapRef.current.removeLayer('route-line');
-      mapRef.current.removeSource('route');
+    // Ensure the map is loaded before trying to update it
+    if (!mapRef.current.loaded()) {
+      mapRef.current.once('load', () => {
+        updateRoute();
+      });
+    } else {
+      updateRoute();
     }
 
-    // Add new route layer
-    mapRef.current.addSource('route', {
-      type: 'geojson',
-      data: {
-        type: 'Feature',
-        properties: {},
-        geometry: {
-          type: 'LineString',
-          coordinates
+    function updateRoute() {
+      const coordinates = route.map(point => [point.longitude, point.latitude]);
+
+      // Remove existing route layer if it exists
+      if (mapRef.current.getSource('route')) {
+        mapRef.current.removeLayer('route-line');
+        mapRef.current.removeSource('route');
+      }
+
+      // Add new route layer
+      mapRef.current.addSource('route', {
+        type: 'geojson',
+        data: {
+          type: 'Feature',
+          properties: {},
+          geometry: {
+            type: 'LineString',
+            coordinates
+          }
         }
-      }
-    });
+      });
 
-    mapRef.current.addLayer({
-      id: 'route-line',
-      type: 'line',
-      source: 'route',
-      layout: {
-        'line-join': 'round',
-        'line-cap': 'round'
-      },
-      paint: {
-        'line-color': '#4299E1',
-        'line-width': 4
-      }
-    });
+      mapRef.current.addLayer({
+        id: 'route-line',
+        type: 'line',
+        source: 'route',
+        layout: {
+          'line-join': 'round',
+          'line-cap': 'round'
+        },
+        paint: {
+          'line-color': '#4299E1',
+          'line-width': 4
+        }
+      });
 
-    // Fit map to route bounds
-    const bounds = coordinates.reduce((bounds, coord) => {
-      return bounds.extend(coord);
-    }, new maplibregl.LngLatBounds(coordinates[0], coordinates[0]));
+      // Fit map to route bounds
+      const bounds = coordinates.reduce((bounds, coord) => {
+        return bounds.extend(coord);
+      }, new maplibregl.LngLatBounds(coordinates[0], coordinates[0]));
 
-    mapRef.current.fitBounds(bounds, {
-      padding: 50,
-      duration: 1000
-    });
+      mapRef.current.fitBounds(bounds, {
+        padding: 50,
+        duration: 1000
+      });
+    }
   }, [route]);
 
   return (
@@ -184,7 +205,10 @@ const MapContainer = ({ isTracking, currentLocation, route, onMapError }) => {
     >
       {isLoading && (
         <Center position="absolute" top={0} left={0} right={0} bottom={0} bg="white" zIndex={1}>
-          <Spinner size="xl" color="blue.500" />
+          <VStack spacing={4}>
+            <Spinner size="xl" color="blue.500" />
+            <Text>Loading map...</Text>
+          </VStack>
         </Center>
       )}
       {error && (
