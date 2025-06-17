@@ -566,49 +566,70 @@ function App() {
   }
 
   // Function to calculate trip statistics
-  const calculateTripStats = (route) => {
-    if (route.length < 2) return null
+  const calculateTripStats = (route, startTime) => {
+    if (!route || route.length === 0) {
+      return {
+        distance: 0,
+        duration: '0:00',
+        averageSpeed: 0,
+        points: 0,
+        startAddress: 'Unknown location',
+        endAddress: 'Unknown location',
+        route: []
+      };
+    }
 
-    // Create a line string from the route points
-    const line = turf.lineString(route.map(point => [point.lng, point.lat]))
+    const endTime = new Date();
+    const durationMs = endTime - startTime;
+    const durationHours = durationMs / (1000 * 60 * 60);
     
-    // Calculate total distance in kilometers
-    const distance = turf.length(line, { units: 'kilometers' })
-    
+    // Calculate total distance using Turf.js
+    let totalDistance = 0;
+    for (let i = 1; i < route.length; i++) {
+      const from = route[i - 1];
+      const to = route[i];
+      const distance = turf.distance(from, to, { units: 'kilometers' });
+      totalDistance += distance;
+    }
+
     // Calculate average speed in km/h
-    const duration = (new Date(route[route.length - 1].timestamp) - new Date(route[0].timestamp)) / 1000 / 60 / 60 // hours
-    const avgSpeed = distance / duration
+    const averageSpeed = durationHours > 0 ? totalDistance / durationHours : 0;
 
-    // Get start and end addresses
-    const startPoint = route[0]
-    const endPoint = route[route.length - 1]
+    // Format duration as HH:MM:SS
+    const hours = Math.floor(durationMs / (1000 * 60 * 60));
+    const minutes = Math.floor((durationMs % (1000 * 60 * 60)) / (1000 * 60));
+    const seconds = Math.floor((durationMs % (1000 * 60)) / 1000);
+    const duration = `${hours}:${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
 
     return {
-      distance: distance.toFixed(2),
-      duration: duration.toFixed(2),
-      avgSpeed: avgSpeed.toFixed(2),
-      startPoint,
-      endPoint,
+      distance: totalDistance,
+      duration,
+      averageSpeed,
+      points: route.length,
+      startAddress: 'Loading...', // Will be updated with reverse geocoding
+      endAddress: 'Loading...', // Will be updated with reverse geocoding
       route
-    }
+    };
   }
 
   // Stop trip recording
   const handleStop = () => {
-    setIsTracking(false)
-    setIsTrackingInterrupted(false)
-    clearInterval(timerRef.current)
     if (watchIdRef.current) {
       navigator.geolocation.clearWatch(watchIdRef.current)
       watchIdRef.current = null
     }
+    setIsTracking(false)
+    setIsTrackingInterrupted(false)
+    clearInterval(timerRef.current)
     setCurrentLocation(null)
     localStorage.removeItem('currentTrip')
     
     // Calculate trip statistics
-    const stats = calculateTripStats(route)
-    setTripStats(stats)
-    setShowSummary(true)
+    if (route.length > 0) {
+      const stats = calculateTripStats(route, startTime)
+      setTripStats(stats)
+      setShowSummary(true)
+    }
   }
 
   // Handle save trip
@@ -622,11 +643,11 @@ function App() {
           route: tripData.route,
           startTime: tripData.startTime,
           endTime: new Date().toISOString(),
-          distance: tripStats.distance,
-          duration: tripStats.duration,
-          avgSpeed: tripStats.avgSpeed,
-          startPoint: tripStats.startPoint,
-          endPoint: tripStats.endPoint
+          distance: tripData.stats.distance,
+          duration: tripData.stats.duration,
+          avgSpeed: tripData.stats.averageSpeed,
+          startPoint: tripData.stats.startPoint,
+          endPoint: tripData.stats.endPoint
         }])
 
       if (error) throw error
@@ -734,85 +755,7 @@ function App() {
     const summaryMapContainerRef = useRef(null)
     const [summaryMap, setSummaryMap] = useState(null)
 
-    useEffect(() => {
-      if (isOpen && stats && stats.route.length > 0) {
-        // Wait for the container to be ready
-        setTimeout(() => {
-          if (summaryMapContainerRef.current && !summaryMap) {
-            const map = new maplibregl.Map({
-              container: summaryMapContainerRef.current,
-              style: `https://api.maptiler.com/maps/streets-v2/style.json?key=${MAPTILER_KEY}`,
-              center: stats.route[0],
-              zoom: 13
-            })
-
-            map.on('load', () => {
-              // Add the route line
-              map.addSource('route', {
-                type: 'geojson',
-                data: {
-                  type: 'Feature',
-                  properties: {},
-                  geometry: {
-                    type: 'LineString',
-                    coordinates: stats.route
-                  }
-                }
-              })
-
-              map.addLayer({
-                id: 'route',
-                type: 'line',
-                source: 'route',
-                layout: {
-                  'line-join': 'round',
-                  'line-cap': 'round'
-                },
-                paint: {
-                  'line-color': '#0080ff',
-                  'line-width': 4
-                }
-              })
-
-              // Add start marker
-              new maplibregl.Marker({
-                element: createMarkerElement('🟢'),
-                anchor: 'bottom'
-              })
-                .setLngLat(stats.route[0])
-                .addTo(map)
-
-              // Add end marker
-              new maplibregl.Marker({
-                element: createMarkerElement('🔴'),
-                anchor: 'bottom'
-              })
-                .setLngLat(stats.route[stats.route.length - 1])
-                .addTo(map)
-
-              // Fit bounds to show the entire route
-              const bounds = stats.route.reduce((bounds, coord) => {
-                return bounds.extend(coord)
-              }, new maplibregl.LngLatBounds(stats.route[0], stats.route[0]))
-
-              map.fitBounds(bounds, {
-                padding: 50,
-                duration: 1000
-              })
-            })
-
-            setSummaryMap(map)
-          }
-        }, 100)
-      }
-
-      return () => {
-        if (summaryMap) {
-          summaryMap.remove()
-          setSummaryMap(null)
-        }
-      }
-    }, [isOpen, stats])
+    if (!stats) return null
 
     return (
       <Modal isOpen={isOpen} onClose={onClose} size="xl">
@@ -825,30 +768,30 @@ function App() {
               <SimpleGrid columns={2} spacing={4}>
                 <Stat>
                   <StatLabel>Distance</StatLabel>
-                  <StatNumber>{stats.distance.toFixed(2)} km</StatNumber>
+                  <StatNumber>{stats.distance?.toFixed(2) || '0.00'} km</StatNumber>
                 </Stat>
                 <Stat>
                   <StatLabel>Duration</StatLabel>
-                  <StatNumber>{stats.duration}</StatNumber>
+                  <StatNumber>{stats.duration || '0:00'}</StatNumber>
                 </Stat>
                 <Stat>
                   <StatLabel>Average Speed</StatLabel>
-                  <StatNumber>{stats.avgSpeed.toFixed(1)} km/h</StatNumber>
+                  <StatNumber>{stats.averageSpeed?.toFixed(1) || '0.0'} km/h</StatNumber>
                 </Stat>
                 <Stat>
                   <StatLabel>Points Recorded</StatLabel>
-                  <StatNumber>{stats.route.length}</StatNumber>
+                  <StatNumber>{stats.points || 0}</StatNumber>
                 </Stat>
               </SimpleGrid>
 
               <Box>
                 <Text fontWeight="bold" mb={2}>Start Location</Text>
-                <Text>{stats.startPoint.address || 'Unknown location'}</Text>
+                <Text>{stats.startAddress || 'Unknown location'}</Text>
               </Box>
 
               <Box>
                 <Text fontWeight="bold" mb={2}>End Location</Text>
-                <Text>{stats.endPoint.address || 'Unknown location'}</Text>
+                <Text>{stats.endAddress || 'Unknown location'}</Text>
               </Box>
 
               <Box height="300px" ref={summaryMapContainerRef} />
@@ -963,7 +906,7 @@ function App() {
             )}
           </Box>
         </VStack>
-        <TripSummaryModal isOpen={showSummary} onClose={() => setShowSummary(false)} stats={tripStats} onSave={() => handleSaveTrip({ name: tripName, notes: tripNotes, route, startTime })} />
+        <TripSummaryModal isOpen={showSummary} onClose={() => setShowSummary(false)} stats={tripStats} onSave={() => handleSaveTrip({ name: tripName, notes: tripNotes, route, startTime, stats: tripStats })} />
         <Modal isOpen={showTripModal} onClose={() => setShowTripModal(false)} size="xl">
           <ModalOverlay />
           <ModalContent>
@@ -1006,7 +949,7 @@ function App() {
               </FormControl>
             </ModalBody>
             <ModalFooter>
-              <Button colorScheme="teal" mr={3} onClick={() => handleSaveTrip({ name: tripName, notes: tripNotes, route, startTime })} isLoading={saving} isDisabled={!tripName}>
+              <Button colorScheme="teal" mr={3} onClick={() => handleSaveTrip({ name: tripName, notes: tripNotes, route, startTime, stats: tripStats })} isLoading={saving} isDisabled={!tripName}>
                 Save
               </Button>
               <Button onClick={() => setShowSave(false)} variant="ghost">Cancel</Button>
