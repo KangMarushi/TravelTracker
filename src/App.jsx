@@ -56,6 +56,13 @@ function App() {
   const [isGettingLocation, setIsGettingLocation] = useState(false)
   const locationRetryCountRef = useRef(0)
   const MAX_RETRIES = 3
+  const lastRecordingTimeRef = useRef(null)
+  const MIN_DISTANCE = 100 // meters
+  const MIN_INTERVAL = 30000 // 30 seconds
+  const [currentAddress, setCurrentAddress] = useState(null)
+  const [isLoadingAddress, setIsLoadingAddress] = useState(false)
+  const lastGeocodeTimeRef = useRef(null)
+  const GEOCODE_INTERVAL = 50000 // Only geocode every 50 seconds
 
   // Add beforeunload handler
   useEffect(() => {
@@ -111,7 +118,9 @@ function App() {
         startTime, 
         lastRecordedPoint: savedLastPoint, 
         currentLocation: savedLocation,
-        lastUpdateTime: savedLastUpdateTime 
+        currentAddress: savedAddress,
+        lastUpdateTime: savedLastUpdateTime,
+        lastRecordingTime: savedLastRecordingTime
       } = JSON.parse(savedTrip)
 
       // Check if the tracking was interrupted
@@ -138,7 +147,9 @@ function App() {
       setStartTime(startTime ? new Date(startTime) : null)
       setLastRecordedPoint(savedLastPoint)
       setCurrentLocation(savedLocation)
+      setCurrentAddress(savedAddress)
       lastUpdateTimeRef.current = savedLastUpdateTime ? new Date(savedLastUpdateTime) : null
+      lastRecordingTimeRef.current = savedLastRecordingTime || null
       
       if (isTracking && startTime) {
         setElapsed(Math.floor((new Date() - new Date(startTime)) / 1000))
@@ -197,12 +208,14 @@ function App() {
         startTime: startTime ? startTime.toISOString() : null,
         lastRecordedPoint,
         currentLocation,
-        lastUpdateTime: lastUpdateTimeRef.current ? lastUpdateTimeRef.current.toISOString() : null
+        currentAddress,
+        lastUpdateTime: lastUpdateTimeRef.current ? lastUpdateTimeRef.current.toISOString() : null,
+        lastRecordingTime: lastRecordingTimeRef.current
       }))
     } else {
       localStorage.removeItem('currentTrip')
     }
-  }, [isTracking, route, startTime, lastRecordedPoint, currentLocation])
+  }, [isTracking, route, startTime, lastRecordedPoint, currentLocation, currentAddress])
 
   // Initialize map with error handling
   useEffect(() => {
@@ -218,7 +231,7 @@ function App() {
           container: mapContainer.current,
           style: `https://api.maptiler.com/maps/streets-v2/style.json?key=${MAPTILER_KEY}`,
           center: [78.6937, 10.7905], // Trichy coordinates
-          zoom: 13
+          zoom: 20
         })
 
         map.on('load', () => {
@@ -318,7 +331,7 @@ function App() {
     }
   }, [route])
 
-  // Update current location marker with improved error handling
+  // Update current location marker with address
   useEffect(() => {
     if (!mapRef.current || !currentLocation) return
 
@@ -341,11 +354,122 @@ function App() {
             duration: 2000
           })
         }
+
+        // Update address if enough time has passed
+        const now = Date.now()
+        if (!lastGeocodeTimeRef.current || now - lastGeocodeTimeRef.current >= GEOCODE_INTERVAL) {
+          setIsLoadingAddress(true)
+          getAddressFromCoordinates(currentLocation.lat, currentLocation.lng)
+            .then(address => {
+              if (address) {
+                setCurrentAddress(address)
+                lastGeocodeTimeRef.current = now
+              }
+            })
+            .finally(() => {
+              setIsLoadingAddress(false)
+            })
+        }
       }
     } catch (error) {
       console.error('Error updating location marker:', error)
     }
   }, [currentLocation, route.length])
+
+  // Function to get address from coordinates
+  const getAddressFromCoordinates = async (lat, lng) => {
+    try {
+      const response = await fetch(
+        `https://api.maptiler.com/geocoding/${lng},${lat}.json?key=${MAPTILER_KEY}`
+      )
+      const data = await response.json()
+      
+      if (data.features && data.features.length > 0) {
+        // Get the most relevant result
+        const result = data.features[0]
+        const address = result.place_name
+        return address
+      }
+      return null
+    } catch (error) {
+      console.error('Error getting address:', error)
+      return null
+    }
+  }
+
+  // New function to handle continuous location watching with hybrid recording
+  const startContinuousWatching = () => {
+    if (!navigator.geolocation) return
+
+    const options = {
+      enableHighAccuracy: true,
+      maximumAge: 0,
+      timeout: 15000
+    }
+
+    try {
+      watchIdRef.current = navigator.geolocation.watchPosition(
+        (position) => {
+          console.log('Location update received:', position)
+          const now = Date.now()
+          const newPoint = {
+            lat: position.coords.latitude,
+            lng: position.coords.longitude,
+            timestamp: new Date().toISOString()
+          }
+
+          // Update last update time
+          lastUpdateTimeRef.current = new Date()
+
+          // Always update current location marker
+          setCurrentLocation(newPoint)
+
+          // Check if we should record this point based on time and distance
+          const shouldRecord = !lastRecordedPoint || // First point
+            now - lastRecordingTimeRef.current >= MIN_INTERVAL || // Time threshold
+            calculateDistance(
+              lastRecordedPoint.lat,
+              lastRecordedPoint.lng,
+              newPoint.lat,
+              newPoint.lng
+            ) >= MIN_DISTANCE // Distance threshold
+
+          if (shouldRecord) {
+            console.log('Recording new point:', {
+              timeSinceLast: now - (lastRecordingTimeRef.current || now),
+              distance: lastRecordedPoint ? calculateDistance(
+                lastRecordedPoint.lat,
+                lastRecordedPoint.lng,
+                newPoint.lat,
+                newPoint.lng
+              ) : 0
+            })
+            
+            setRoute(prevRoute => [...prevRoute, newPoint])
+            setLastRecordedPoint(newPoint)
+            lastRecordingTimeRef.current = now
+          }
+        },
+        (error) => {
+          console.error('Watch position error:', error)
+          setGeoError(`Location update error: ${error.message}. Trying to recover...`)
+          
+          // Try to restart watching if we lose connection
+          if (watchIdRef.current) {
+            navigator.geolocation.clearWatch(watchIdRef.current)
+            watchIdRef.current = null
+          }
+          setTimeout(() => {
+            startContinuousWatching()
+          }, 1000)
+        },
+        options
+      )
+    } catch (error) {
+      console.error('Error starting watch position:', error)
+      setGeoError('Error starting location tracking. Please try again.')
+    }
+  }
 
   // Improved: Start trip recording
   const handleStart = () => {
@@ -356,6 +480,7 @@ function App() {
     setGeoError(null)
     setLastRecordedPoint(null)
     setCurrentLocation(null)
+    lastRecordingTimeRef.current = null
     const now = new Date()
     setStartTime(now)
     setElapsed(0)
@@ -371,7 +496,7 @@ function App() {
     getInitialLocation()
   }
 
-  // New function to handle initial location acquisition with retries
+  // Update getInitialLocation to set lastRecordingTimeRef
   const getInitialLocation = () => {
     if (!navigator.geolocation) {
       setGeoError('Geolocation is not supported by your browser.')
@@ -386,7 +511,7 @@ function App() {
     const options = {
       enableHighAccuracy: true,
       maximumAge: 0,
-      timeout: 15000 // Increased timeout to 15 seconds
+      timeout: 15000
     }
 
     const handleSuccess = (position) => {
@@ -404,6 +529,7 @@ function App() {
       setRoute([initialPoint])
       setLastRecordedPoint(initialPoint)
       lastUpdateTimeRef.current = new Date()
+      lastRecordingTimeRef.current = Date.now()
 
       // Start continuous watching after successful initial location
       startContinuousWatching()
@@ -431,65 +557,6 @@ function App() {
     } catch (error) {
       console.error('Error starting geolocation:', error)
       handleError(error)
-    }
-  }
-
-  // New function to handle continuous location watching
-  const startContinuousWatching = () => {
-    if (!navigator.geolocation) return
-
-    const options = {
-      enableHighAccuracy: true,
-      maximumAge: 0,
-      timeout: 15000
-    }
-
-    try {
-      watchIdRef.current = navigator.geolocation.watchPosition(
-        (position) => {
-          console.log('Location update received:', position)
-          const newPoint = {
-            lat: position.coords.latitude,
-            lng: position.coords.longitude,
-            timestamp: new Date().toISOString()
-          }
-
-          // Update last update time
-          lastUpdateTimeRef.current = new Date()
-
-          // Always update current location marker
-          setCurrentLocation(newPoint)
-
-          // If this is the first point or distance > 100m, record it
-          if (!lastRecordedPoint || 
-              calculateDistance(
-                lastRecordedPoint.lat, 
-                lastRecordedPoint.lng, 
-                newPoint.lat, 
-                newPoint.lng
-              ) > 100) {
-            setRoute(prevRoute => [...prevRoute, newPoint])
-            setLastRecordedPoint(newPoint)
-          }
-        },
-        (error) => {
-          console.error('Watch position error:', error)
-          setGeoError(`Location update error: ${error.message}. Trying to recover...`)
-          
-          // Try to restart watching if we lose connection
-          if (watchIdRef.current) {
-            navigator.geolocation.clearWatch(watchIdRef.current)
-            watchIdRef.current = null
-          }
-          setTimeout(() => {
-            startContinuousWatching()
-          }, 1000)
-        },
-        options
-      )
-    } catch (error) {
-      console.error('Error starting watch position:', error)
-      setGeoError('Error starting location tracking. Please try again.')
     }
   }
 
