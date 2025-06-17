@@ -29,6 +29,56 @@ function App() {
   const routeLayerId = 'route-line'
   const toast = useToast()
 
+  // Restore trip state from localStorage on page load
+  useEffect(() => {
+    const savedTrip = localStorage.getItem('currentTrip')
+    if (savedTrip) {
+      const { isTracking, route, startTime } = JSON.parse(savedTrip)
+      setIsTracking(isTracking)
+      setRoute(route)
+      setStartTime(startTime ? new Date(startTime) : null)
+      if (isTracking && startTime) {
+        setElapsed(Math.floor((new Date() - new Date(startTime)) / 1000))
+        // Restart the timer
+        timerRef.current = setInterval(() => {
+          setElapsed(Math.floor((new Date() - new Date(startTime)) / 1000))
+        }, 1000)
+        // Restart geolocation tracking
+        geoRef.current = setInterval(() => {
+          if (navigator.geolocation) {
+            navigator.geolocation.getCurrentPosition(
+              pos => {
+                setRoute(r => [...r, {
+                  lat: pos.coords.latitude,
+                  lng: pos.coords.longitude,
+                  timestamp: new Date().toISOString()
+                }])
+              },
+              err => {
+                setGeoError(err.message)
+              }
+            )
+          } else {
+            setGeoError('Geolocation is not supported by your browser.')
+          }
+        }, 20000)
+      }
+    }
+  }, [])
+
+  // Save trip state to localStorage whenever it changes
+  useEffect(() => {
+    if (isTracking) {
+      localStorage.setItem('currentTrip', JSON.stringify({
+        isTracking,
+        route,
+        startTime: startTime ? startTime.toISOString() : null
+      }))
+    } else {
+      localStorage.removeItem('currentTrip')
+    }
+  }, [isTracking, route, startTime])
+
   // Initialize map
   useEffect(() => {
     if (!mapContainer.current) return
@@ -36,8 +86,8 @@ function App() {
     mapRef.current = new maplibregl.Map({
       container: mapContainer.current,
       style: `https://api.maptiler.com/maps/streets/style.json?key=${MAPTILER_KEY}`,
-      center: [2.3522, 48.8566], // Default to Paris
-      zoom: 5,
+      center: [10.799326633067423, 78.68743620912605], // Default to Trichy
+      zoom: 10,
     })
   }, [])
 
@@ -150,6 +200,7 @@ function App() {
     setIsTracking(false)
     clearInterval(timerRef.current)
     clearInterval(geoRef.current)
+    localStorage.removeItem('currentTrip') // Clear saved trip from localStorage
     setShowSave(true)
   }
 
