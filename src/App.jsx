@@ -72,6 +72,8 @@ function App() {
   const [recordingInterval, setRecordingInterval] = useState(20)
   const [recordingDistance, setRecordingDistance] = useState(100)
   const [lastAddressUpdate, setLastAddressUpdate] = useState(0)
+  const [isInitializing, setIsInitializing] = useState(true)
+  const initialWatchIdRef = useRef(null)
 
   // Add beforeunload handler
   useEffect(() => {
@@ -388,29 +390,27 @@ function App() {
   // Function to get address from coordinates
   const getAddressFromCoordinates = async (lat, lng) => {
     try {
+      setIsLoadingAddress(true);
       const response = await fetch(
-        `https://api.maptiler.com/geocoding/${lng},${lat}.json?key=${MAPTILER_KEY}`
-      )
-      const data = await response.json()
+        `https://api.maptiler.com/geocoding/${lng},${lat}.json?key=${import.meta.env.VITE_MAPTILER_API_KEY}`
+      );
+      const data = await response.json();
       
       if (data.features && data.features.length > 0) {
-        // Get the most relevant result
-        const result = data.features[0]
-        const address = result.place_name
-        return address
+        const address = data.features[0].place_name;
+        setCurrentAddress(address);
       }
-      return null
     } catch (error) {
-      console.error('Error getting address:', error)
-      return null
+      console.error('Error getting address:', error);
+    } finally {
+      setIsLoadingAddress(false);
     }
-  }
+  };
 
   // Function to handle recording mode change
   const handleRecordingModeChange = (mode) => {
     setRecordingMode(mode)
-    // Reset recording time when changing modes
-    lastRecordingTimeRef.current = null
+    setLastRecordingTime(0) // Reset last recording time when mode changes
   }
 
   // New function to handle continuous location watching with configurable recording
@@ -476,94 +476,105 @@ function App() {
     setWatchId(watchId)
   }
 
-  // Improved: Start trip recording
-  const handleStart = () => {
-    // Reset interrupted state
-    setIsTrackingInterrupted(false)
-    setIsTracking(true)
-    setRoute([])
-    setGeoError(null)
-    setLastRecordedPoint(null)
-    setCurrentLocation(null)
-    lastRecordingTimeRef.current = null
-    const now = new Date()
-    setStartTime(now)
-    setElapsed(0)
-    lastUpdateTimeRef.current = now
-    locationRetryCountRef.current = 0
-    
-    // Timer for elapsed time
-    timerRef.current = setInterval(() => {
-      setElapsed(Math.floor((new Date() - now) / 1000))
-    }, 1000)
-
-    // Start getting location
-    getInitialLocation()
-  }
-
-  // Update getInitialLocation to set lastRecordingTimeRef
-  const getInitialLocation = () => {
+  // Add new function for initial location tracking
+  const startInitialLocationTracking = () => {
     if (!navigator.geolocation) {
-      setGeoError('Geolocation is not supported by your browser.')
-      setIsTracking(false)
-      clearInterval(timerRef.current)
-      return
+      setError('Geolocation is not supported by your browser');
+      setIsInitializing(false);
+      return;
     }
-
-    setIsGettingLocation(true)
-    setGeoError(null)
 
     const options = {
       enableHighAccuracy: true,
-      maximumAge: 0,
-      timeout: 15000
+      timeout: 10000,
+      maximumAge: 0
+    };
+
+    initialWatchIdRef.current = navigator.geolocation.watchPosition(
+      (position) => {
+        const { latitude, longitude } = position.coords;
+        setCurrentLocation([latitude, longitude]);
+        
+        // Update map center if map is ready
+        if (mapRef.current) {
+          mapRef.current.setCenter([longitude, latitude]);
+          
+          // Update or add the current location marker
+          if (currentLocationMarkerRef.current) {
+            currentLocationMarkerRef.current.setLngLat([longitude, latitude]);
+          } else {
+            currentLocationMarkerRef.current = new maplibregl.Marker({
+              element: createMarkerElement('🧍'),
+              anchor: 'bottom'
+            })
+              .setLngLat([longitude, latitude])
+              .addTo(mapRef.current);
+          }
+        }
+
+        // Get initial address
+        getAddressFromCoordinates(latitude, longitude);
+        setIsInitializing(false);
+      },
+      (error) => {
+        console.error('Initial geolocation error:', error);
+        setError(`Error getting initial location: ${error.message}`);
+        setIsInitializing(false);
+      },
+      options
+    );
+  };
+
+  // Update the useEffect for map initialization
+  useEffect(() => {
+    if (mapContainer.current && !mapRef.current) {
+      setIsInitializing(true);
+      const map = new maplibregl.Map({
+        container: mapContainer.current,
+        style: `https://api.maptiler.com/maps/streets-v2/style.json?key=${import.meta.env.VITE_MAPTILER_API_KEY}`,
+        center: [78.6937, 10.7905], // Default to Trichy
+        zoom: 13
+      });
+
+      map.on('load', () => {
+        setMapLoading(false);
+        mapRef.current = map;
+        // Start initial location tracking after map is loaded
+        startInitialLocationTracking();
+      });
+
+      map.on('error', (e) => {
+        console.error('Map error:', e);
+        setMapError('Error loading map. Please refresh the page.');
+        setMapLoading(false);
+      });
     }
 
-    const handleSuccess = (position) => {
-      console.log('Initial location acquired:', position)
-      setIsGettingLocation(false)
-      locationRetryCountRef.current = 0
-
-      const initialPoint = {
-        lat: position.coords.latitude,
-        lng: position.coords.longitude,
-        timestamp: new Date().toISOString()
+    return () => {
+      if (initialWatchIdRef.current) {
+        navigator.geolocation.clearWatch(initialWatchIdRef.current);
       }
-
-      setCurrentLocation(initialPoint)
-      setRoute([initialPoint])
-      setLastRecordedPoint(initialPoint)
-      lastUpdateTimeRef.current = new Date()
-      lastRecordingTimeRef.current = Date.now()
-
-      // Start continuous watching after successful initial location
-      startContinuousWatching()
-    }
-
-    const handleError = (error) => {
-      console.error('Geolocation error:', error)
-      setIsGettingLocation(false)
-
-      if (locationRetryCountRef.current < MAX_RETRIES) {
-        locationRetryCountRef.current += 1
-        console.log(`Retrying location acquisition (attempt ${locationRetryCountRef.current})`)
-        setTimeout(() => {
-          getInitialLocation()
-        }, 1000) // Wait 1 second before retrying
-      } else {
-        setGeoError(`Unable to get your location after ${MAX_RETRIES} attempts. Please check your device settings and try again.`)
-        setIsTracking(false)
-        clearInterval(timerRef.current)
+      if (mapRef.current) {
+        mapRef.current.remove();
+        mapRef.current = null;
       }
+    };
+  }, []);
+
+  // Update the handleStart function to use existing location
+  const handleStart = () => {
+    if (!currentLocation) {
+      setError('Waiting for location...');
+      return;
     }
 
-    try {
-      navigator.geolocation.getCurrentPosition(handleSuccess, handleError, options)
-    } catch (error) {
-      console.error('Error starting geolocation:', error)
-      handleError(error)
-    }
-  }
+    setIsTracking(true);
+    setStartTime(new Date());
+    setRoute([currentLocation]);
+    setLastRecordingTime(Date.now());
+    setLastPoint(currentLocation);
+    startContinuousWatching();
+  };
 
   // Function to calculate trip statistics
   const calculateTripStats = (route, startTime) => {
@@ -635,45 +646,40 @@ function App() {
   // Handle save trip
   const handleSaveTrip = async (tripData) => {
     try {
+      setSaving(true);
       const { data, error } = await supabase
         .from('trips')
         .insert([{
           name: tripData.name,
           notes: tripData.notes,
           route: tripData.route,
-          startTime: tripData.startTime,
+          startTime: new Date(tripData.startTime).toISOString(),
           endTime: new Date().toISOString(),
           distance: tripData.stats.distance,
           duration: tripData.stats.duration,
           avgSpeed: tripData.stats.averageSpeed,
-          startPoint: tripData.stats.startPoint,
-          endPoint: tripData.stats.endPoint
-        }])
+          startPoint: tripData.stats.startAddress,
+          endPoint: tripData.stats.endAddress,
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+          isFavorite: false
+        }]);
 
-      if (error) throw error
-
-      toast({
-        title: 'Trip saved successfully!',
-        status: 'success',
-        duration: 3000,
-        isClosable: true,
-      })
-
-      setShowSave(false)
-      setShowSummary(false)
-      setTripStats(null)
-      fetchTrips()
+      if (error) throw error;
+      
+      setShowSave(false);
+      setShowSummary(false);
+      setRoute([]);
+      setTripName('');
+      setTripNotes('');
+      fetchTrips();
     } catch (error) {
-      console.error('Error saving trip:', error)
-      toast({
-        title: 'Error saving trip',
-        description: error.message,
-        status: 'error',
-        duration: 5000,
-        isClosable: true,
-      })
+      console.error('Error saving trip:', error);
+      setError('Failed to save trip. Please try again.');
+    } finally {
+      setSaving(false);
     }
-  }
+  };
 
   // Fetch trips from Supabase
   useEffect(() => {
