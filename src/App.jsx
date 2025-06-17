@@ -47,12 +47,22 @@ function App() {
       // Log the data being sent to Supabase
       console.log('Saving trip data:', tripData);
 
+      const now = new Date().toISOString();
       const tripToSave = {
-        name: tripData.name,
-        notes: tripData.notes,
-        stats: tripData.stats,
-        route: tripData.route, // Fix: Use tripData.route instead of tripData.stats.route
-        createdat: new Date().toISOString(),
+        name: tripData.name || 'Untitled Trip',
+        notes: tripData.notes || '',
+        route: tripData.route || [],
+        createdat: now,
+        updatedat: now,
+        isfavorite: false,
+        avgSpeed: tripData.stats?.avgSpeed || 0,
+        distance: tripData.stats?.distance || 0,
+        duration: tripData.stats?.duration || 0,
+        endPoint: tripData.stats?.endPoint || null,
+        endTime: tripData.stats?.endTime || null,
+        startPoint: tripData.stats?.startPoint || null,
+        startTime: tripData.stats?.startTime || null,
+        stats: tripData.stats || {}
       };
 
       console.log('Formatted trip data:', tripToSave);

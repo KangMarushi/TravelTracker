@@ -1,13 +1,34 @@
-import React, { useRef, useEffect, useCallback } from 'react';
-import { Box } from '@chakra-ui/react';
+import React, { useRef, useEffect, useCallback, useState } from 'react';
+import { Box, Center, Spinner, Text, VStack } from '@chakra-ui/react';
 import maplibregl from 'maplibre-gl';
 import 'maplibre-gl/dist/maplibre-gl.css';
 
-const MapContainer = ({ isTracking, currentLocation, route, onMapError }) => {
+const DEFAULT_CENTER = [-74.006, 40.7128]; // New York City
+const DEFAULT_ZOOM = 12;
+const MIN_HEIGHT = { base: '300px', md: '500px' };
+const MIN_DISTANCE_THRESHOLD = 50; // meters
+const ZOOM_LEVEL = 15;
+const FLY_DURATION = 1000;
+
+const MapContainer = ({ 
+  isTracking, 
+  currentLocation, 
+  route, 
+  onMapError,
+  markerEmoji = '🚶',
+  minHeight = MIN_HEIGHT,
+  onMapLoaded
+}) => {
   const mapContainerRef = useRef(null);
   const mapRef = useRef(null);
   const markerRef = useRef(null);
   const isFirstLoad = useRef(true);
+  const previousRouteRef = useRef(null);
+  const lastCenterRef = useRef(null);
+  const lastUpdateTimeRef = useRef(0);
+  const [isMapLoaded, setIsMapLoaded] = useState(false);
+  const [retryCount, setRetryCount] = useState(0);
+  const MAX_RETRIES = 3;
 
   const createMarkerElement = (emoji) => {
     const el = document.createElement('div');
@@ -19,124 +40,21 @@ const MapContainer = ({ isTracking, currentLocation, route, onMapError }) => {
     return el;
   };
 
-  const initializeMap = useCallback(() => {
-    if (!mapContainerRef.current || mapRef.current) return;
+  const isValidCoordinate = (lat, lng) => {
+    return (
+      typeof lat === 'number' && 
+      typeof lng === 'number' && 
+      !isNaN(lat) && 
+      !isNaN(lng) && 
+      lat >= -90 && 
+      lat <= 90 && 
+      lng >= -180 && 
+      lng <= 180
+    );
+  };
 
-    const apiKey = import.meta.env.VITE_MAPTILER_API_KEY;
-    if (!apiKey) {
-      onMapError(new Error('MapTiler API key is not configured'));
-      return;
-    }
-
-    try {
-      const map = new maplibregl.Map({
-        container: mapContainerRef.current,
-        style: `https://api.maptiler.com/maps/streets/style.json?key=${apiKey}`,
-        center: [0, 0],
-        zoom: 2,
-        attributionControl: false,
-        preserveDrawingBuffer: true,
-        maxZoom: 18,
-        minZoom: 2
-      });
-
-      map.on('load', () => {
-        console.log('Map loaded successfully');
-        mapRef.current = map;
-
-        // Add navigation controls after map is loaded
-        map.addControl(new maplibregl.NavigationControl(), 'top-right');
-        map.addControl(new maplibregl.AttributionControl({
-          compact: true
-        }));
-
-        // Initialize marker if we have a location
-        if (currentLocation) {
-          const { latitude, longitude } = currentLocation;
-          markerRef.current = new maplibregl.Marker({
-            element: createMarkerElement('🚶'),
-            anchor: 'bottom'
-          })
-            .setLngLat([longitude, latitude])
-            .addTo(map);
-
-          // Set initial view if this is the first load
-          if (isFirstLoad.current) {
-            map.flyTo({
-              center: [longitude, latitude],
-              zoom: 15,
-              essential: true,
-              duration: 0
-            });
-            isFirstLoad.current = false;
-          }
-        }
-      });
-
-      map.on('error', (e) => {
-        console.error('Map error:', e);
-        onMapError(new Error('Failed to load map'));
-      });
-
-    } catch (error) {
-      console.error('Map initialization error:', error);
-      onMapError(error);
-    }
-  }, [onMapError, currentLocation]);
-
-  // Initialize map on mount
-  useEffect(() => {
-    initializeMap();
-    return () => {
-      if (mapRef.current) {
-        mapRef.current.remove();
-        mapRef.current = null;
-      }
-    };
-  }, [initializeMap]);
-
-  // Update marker and map when location changes
-  useEffect(() => {
-    if (!mapRef.current || !currentLocation || !mapRef.current.loaded()) return;
-
-    const { latitude, longitude } = currentLocation;
-    
-    // Update or create marker
-    if (markerRef.current) {
-      markerRef.current.setLngLat([longitude, latitude]);
-    } else {
-      markerRef.current = new maplibregl.Marker({
-        element: createMarkerElement('🚶'),
-        anchor: 'bottom'
-      })
-        .setLngLat([longitude, latitude])
-        .addTo(mapRef.current);
-    }
-
-    // Update map view only when tracking
-    if (isTracking) {
-      const currentCenter = mapRef.current.getCenter();
-      const currentZoom = mapRef.current.getZoom();
-      const distance = mapRef.current.getCenter().distanceTo([longitude, latitude]);
-      
-      // Only update if we've moved significantly or zoom is too far out
-      if (distance > 50 || currentZoom < 14) {
-        mapRef.current.flyTo({
-          center: [longitude, latitude],
-          zoom: 15,
-          essential: true,
-          duration: 1000,
-          maxDuration: 1000
-        });
-      }
-    }
-  }, [isTracking, currentLocation]);
-
-  // Update route on map
-  useEffect(() => {
-    if (!mapRef.current || !route || route.length === 0 || !mapRef.current.loaded()) return;
-
-    const coordinates = route.map(point => [point.longitude, point.latitude]);
+  const drawRoute = useCallback((coordinates) => {
+    if (!mapRef.current || !mapRef.current.loaded()) return;
 
     // Remove existing route layer if it exists
     if (mapRef.current.getSource('route')) {
@@ -170,6 +88,168 @@ const MapContainer = ({ isTracking, currentLocation, route, onMapError }) => {
         'line-width': 4
       }
     });
+  }, []);
+
+  const updateMapView = useCallback((newCenter) => {
+    if (!mapRef.current || !mapRef.current.loaded()) return;
+
+    const now = Date.now();
+    const lastUpdate = lastUpdateTimeRef.current;
+    const timeSinceLastUpdate = now - lastUpdate;
+
+    // Skip if we've updated too recently (throttle)
+    if (timeSinceLastUpdate < FLY_DURATION) {
+      return;
+    }
+
+    const lastCenter = lastCenterRef.current;
+    const distance = lastCenter
+      ? maplibregl.LngLat.convert(lastCenter).distanceTo(newCenter)
+      : Infinity;
+
+    // Only update if we've moved significantly
+    if (distance > MIN_DISTANCE_THRESHOLD) {
+      mapRef.current.flyTo({
+        center: newCenter,
+        zoom: ZOOM_LEVEL,
+        essential: true,
+        duration: FLY_DURATION,
+        maxDuration: FLY_DURATION
+      });
+      lastCenterRef.current = newCenter;
+      lastUpdateTimeRef.current = now;
+    }
+  }, []);
+
+  const initializeMap = useCallback(() => {
+    if (!mapContainerRef.current || mapRef.current) return;
+
+    const apiKey = import.meta.env.VITE_MAPTILER_API_KEY;
+    if (!apiKey) {
+      onMapError(new Error('MapTiler API key is not configured'));
+      return;
+    }
+
+    try {
+      const map = new maplibregl.Map({
+        container: mapContainerRef.current,
+        style: `https://api.maptiler.com/maps/streets/style.json?key=${apiKey}`,
+        center: DEFAULT_CENTER,
+        zoom: DEFAULT_ZOOM,
+        attributionControl: false,
+        preserveDrawingBuffer: true,
+        maxZoom: 18,
+        minZoom: 2
+      });
+
+      map.on('load', () => {
+        console.log('Map loaded successfully');
+        mapRef.current = map;
+        setIsMapLoaded(true);
+        if (onMapLoaded) onMapLoaded();
+
+        // Add navigation controls after map is loaded
+        map.addControl(new maplibregl.NavigationControl(), 'top-right');
+        map.addControl(new maplibregl.AttributionControl({
+          compact: true
+        }));
+
+        // Initialize marker if we have a valid location
+        if (currentLocation && isValidCoordinate(currentLocation.latitude, currentLocation.longitude)) {
+          const newCenter = [currentLocation.longitude, currentLocation.latitude];
+          markerRef.current = new maplibregl.Marker({
+            element: createMarkerElement(markerEmoji),
+            anchor: 'bottom'
+          })
+            .setLngLat(newCenter)
+            .addTo(map);
+
+          // Set initial view if this is the first load
+          if (isFirstLoad.current) {
+            map.flyTo({
+              center: newCenter,
+              zoom: ZOOM_LEVEL,
+              essential: true,
+              duration: 0
+            });
+            lastCenterRef.current = newCenter;
+            isFirstLoad.current = false;
+          }
+        }
+      });
+
+      map.on('error', (e) => {
+        console.error('Map error:', e);
+        onMapError(new Error('Failed to load map'));
+      });
+
+    } catch (error) {
+      console.error('Map initialization error:', error);
+      onMapError(error);
+    }
+  }, [onMapError, currentLocation, markerEmoji, onMapLoaded]);
+
+  // Initialize map on mount
+  useEffect(() => {
+    initializeMap();
+    return () => {
+      if (mapRef.current) {
+        mapRef.current.remove();
+        mapRef.current = null;
+      }
+    };
+  }, [initializeMap]);
+
+  // Update marker and map when location changes
+  useEffect(() => {
+    if (!mapRef.current || !currentLocation || !mapRef.current.loaded()) {
+      if (retryCount < MAX_RETRIES) {
+        const timer = setTimeout(() => {
+          setRetryCount(prev => prev + 1);
+        }, 1000);
+        return () => clearTimeout(timer);
+      }
+      return;
+    }
+
+    const { latitude, longitude } = currentLocation;
+    
+    if (!isValidCoordinate(latitude, longitude)) {
+      console.warn('Invalid coordinates:', { latitude, longitude });
+      return;
+    }
+
+    const newCenter = [longitude, latitude];
+
+    // Update or create marker
+    if (markerRef.current) {
+      markerRef.current.setLngLat(newCenter);
+    } else {
+      markerRef.current = new maplibregl.Marker({
+        element: createMarkerElement(markerEmoji),
+        anchor: 'bottom'
+      })
+        .setLngLat(newCenter)
+        .addTo(mapRef.current);
+    }
+
+    // Update map view only when tracking
+    if (isTracking) {
+      updateMapView(newCenter);
+    }
+  }, [isTracking, currentLocation, markerEmoji, retryCount, updateMapView]);
+
+  // Update route on map
+  useEffect(() => {
+    if (!mapRef.current || !route || route.length === 0 || !mapRef.current.loaded()) return;
+
+    // Check if route has changed
+    const currentRoute = JSON.stringify(route);
+    if (currentRoute === previousRouteRef.current) return;
+    previousRouteRef.current = currentRoute;
+
+    const coordinates = route.map(point => [point.longitude, point.latitude]);
+    drawRoute(coordinates);
 
     // Only fit bounds if we're not tracking
     if (!isTracking) {
@@ -179,11 +259,22 @@ const MapContainer = ({ isTracking, currentLocation, route, onMapError }) => {
 
       mapRef.current.fitBounds(bounds, {
         padding: { top: 50, bottom: 50, left: 50, right: 50 },
-        duration: 1000,
-        maxZoom: 15
+        duration: FLY_DURATION,
+        maxZoom: ZOOM_LEVEL
       });
     }
-  }, [route, isTracking]);
+  }, [route, isTracking, drawRoute]);
+
+  if (!isMapLoaded) {
+    return (
+      <Center minH={minHeight} bg="gray.50">
+        <VStack spacing={4}>
+          <Spinner size="xl" color="blue.500" />
+          <Text>Loading map...</Text>
+        </VStack>
+      </Center>
+    );
+  }
 
   return (
     <Box
@@ -194,7 +285,7 @@ const MapContainer = ({ isTracking, currentLocation, route, onMapError }) => {
       display="flex"
       flexDirection="column"
       bg="gray.50"
-      style={{ minHeight: '400px' }}
+      minH={minHeight}
     />
   );
 };
