@@ -5,7 +5,7 @@ import maplibregl from 'maplibre-gl'
 import { supabase } from './supabaseClient'
 import * as turf from '@turf/turf'
 
-const MAPTILER_KEY = 'Uu2plMpWPcX4fjAFpFNr'
+const MAPTILER_KEY = import.meta.env.VITE_MAPTILER_API_KEY
 
 // Helper function to calculate distance between two points in meters
 function calculateDistance(lat1, lon1, lat2, lon2) {
@@ -239,7 +239,7 @@ function App() {
 
       const map = new maplibregl.Map({
         container: mapContainerRef.current,
-        style: `https://api.maptiler.com/maps/streets-v2/style.json?key=${import.meta.env.VITE_MAPTILER_API_KEY}`,
+        style: `https://api.maptiler.com/maps/streets-v2/style.json?key=${MAPTILER_KEY}`,
         center: [78.6937, 10.7905], // Default to Trichy
         zoom: 13
       });
@@ -436,7 +436,7 @@ function App() {
     try {
       setIsLoadingAddress(true);
       const response = await fetch(
-        `https://api.maptiler.com/geocoding/${lng},${lat}.json?key=${import.meta.env.VITE_MAPTILER_API_KEY}`
+        `https://api.maptiler.com/geocoding/${lng},${lat}.json?key=${MAPTILER_KEY}`
       );
       const data = await response.json();
       
@@ -526,7 +526,7 @@ function App() {
       setIsInitializing(true);
       const map = new maplibregl.Map({
         container: mapContainerRef.current,
-        style: `https://api.maptiler.com/maps/streets-v2/style.json?key=${import.meta.env.VITE_MAPTILER_API_KEY}`,
+        style: `https://api.maptiler.com/maps/streets-v2/style.json?key=${MAPTILER_KEY}`,
         center: [78.6937, 10.7905], // Default to Trichy
         zoom: 13
       });
