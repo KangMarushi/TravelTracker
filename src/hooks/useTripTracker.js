@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { getCurrentPosition, getAddressFromCoordinates } from '../utils/geolocation';
 
 const useTripTracker = () => {
@@ -20,6 +20,10 @@ const useTripTracker = () => {
     averageSpeed: 0,
     route: []
   });
+
+  // Refs for tracking last recorded point and time
+  const lastRecordedPointRef = useRef(null);
+  const lastRecordedTimeRef = useRef(null);
 
   // Update elapsed time
   useEffect(() => {
@@ -93,6 +97,10 @@ const useTripTracker = () => {
       setRoute([newLocation]);
       setStartTime(new Date());
       setElapsed(0);
+      
+      // Initialize tracking refs
+      lastRecordedPointRef.current = newLocation;
+      lastRecordedTimeRef.current = Date.now();
     } catch (error) {
       console.error('Error starting tracking:', error);
       setGeoError(error.message);
@@ -100,19 +108,25 @@ const useTripTracker = () => {
     }
   }, []);
 
-  const stopTracking = useCallback(() => {
-    setIsTracking(false);
-    setIsPaused(false);
-    setStartTime(null);
-  }, []);
+  const shouldRecordPoint = useCallback((newLocation) => {
+    const now = Date.now();
+    const lastPoint = lastRecordedPointRef.current;
+    const lastTime = lastRecordedTimeRef.current;
 
-  const pauseTracking = useCallback(() => {
-    setIsPaused(true);
-  }, []);
+    if (!lastPoint || !lastTime) return true;
 
-  const resumeTracking = useCallback(() => {
-    setIsPaused(false);
-  }, []);
+    if (recordingMode === 'time') {
+      return now - lastTime >= recordingInterval * 1000;
+    } else {
+      const distance = calculateDistance(
+        lastPoint.latitude,
+        lastPoint.longitude,
+        newLocation.latitude,
+        newLocation.longitude
+      );
+      return distance >= recordingDistance / 1000; // Convert meters to kilometers
+    }
+  }, [recordingMode, recordingInterval, recordingDistance]);
 
   // Track location updates
   useEffect(() => {
@@ -121,7 +135,7 @@ const useTripTracker = () => {
       const options = {
         enableHighAccuracy: true,
         maximumAge: 0,
-        timeout: 30000 // Increased timeout to 30 seconds
+        timeout: 30000
       };
 
       watchId = navigator.geolocation.watchPosition(
@@ -131,8 +145,14 @@ const useTripTracker = () => {
             longitude: position.coords.longitude,
             timestamp: new Date().toISOString()
           };
+          
           setCurrentLocation(newLocation);
-          setRoute(prev => [...prev, newLocation]);
+          
+          if (shouldRecordPoint(newLocation)) {
+            setRoute(prev => [...prev, newLocation]);
+            lastRecordedPointRef.current = newLocation;
+            lastRecordedTimeRef.current = Date.now();
+          }
         },
         (error) => {
           console.error('Error watching position:', error);
@@ -162,7 +182,23 @@ const useTripTracker = () => {
         navigator.geolocation.clearWatch(watchId);
       }
     };
-  }, [isTracking, isPaused]);
+  }, [isTracking, isPaused, shouldRecordPoint]);
+
+  const stopTracking = useCallback(() => {
+    setIsTracking(false);
+    setIsPaused(false);
+    setStartTime(null);
+    lastRecordedPointRef.current = null;
+    lastRecordedTimeRef.current = null;
+  }, []);
+
+  const pauseTracking = useCallback(() => {
+    setIsPaused(true);
+  }, []);
+
+  const resumeTracking = useCallback(() => {
+    setIsPaused(false);
+  }, []);
 
   return {
     isTracking,
