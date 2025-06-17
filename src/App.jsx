@@ -53,6 +53,9 @@ function App() {
   const currentLocationLayerId = 'current-location'
   const [isTrackingInterrupted, setIsTrackingInterrupted] = useState(false)
   const lastUpdateTimeRef = useRef(null)
+  const [isGettingLocation, setIsGettingLocation] = useState(false)
+  const locationRetryCountRef = useRef(0)
+  const MAX_RETRIES = 3
 
   // Add beforeunload handler
   useEffect(() => {
@@ -357,81 +360,136 @@ function App() {
     setStartTime(now)
     setElapsed(0)
     lastUpdateTimeRef.current = now
+    locationRetryCountRef.current = 0
     
     // Timer for elapsed time
     timerRef.current = setInterval(() => {
       setElapsed(Math.floor((new Date() - now) / 1000))
     }, 1000)
 
-    // Start watching position with improved error handling
-    if (navigator.geolocation) {
-      // First get a quick initial position
-      navigator.geolocation.getCurrentPosition(
+    // Start getting location
+    getInitialLocation()
+  }
+
+  // New function to handle initial location acquisition with retries
+  const getInitialLocation = () => {
+    if (!navigator.geolocation) {
+      setGeoError('Geolocation is not supported by your browser.')
+      setIsTracking(false)
+      clearInterval(timerRef.current)
+      return
+    }
+
+    setIsGettingLocation(true)
+    setGeoError(null)
+
+    const options = {
+      enableHighAccuracy: true,
+      maximumAge: 0,
+      timeout: 15000 // Increased timeout to 15 seconds
+    }
+
+    const handleSuccess = (position) => {
+      console.log('Initial location acquired:', position)
+      setIsGettingLocation(false)
+      locationRetryCountRef.current = 0
+
+      const initialPoint = {
+        lat: position.coords.latitude,
+        lng: position.coords.longitude,
+        timestamp: new Date().toISOString()
+      }
+
+      setCurrentLocation(initialPoint)
+      setRoute([initialPoint])
+      setLastRecordedPoint(initialPoint)
+      lastUpdateTimeRef.current = new Date()
+
+      // Start continuous watching after successful initial location
+      startContinuousWatching()
+    }
+
+    const handleError = (error) => {
+      console.error('Geolocation error:', error)
+      setIsGettingLocation(false)
+
+      if (locationRetryCountRef.current < MAX_RETRIES) {
+        locationRetryCountRef.current += 1
+        console.log(`Retrying location acquisition (attempt ${locationRetryCountRef.current})`)
+        setTimeout(() => {
+          getInitialLocation()
+        }, 1000) // Wait 1 second before retrying
+      } else {
+        setGeoError(`Unable to get your location after ${MAX_RETRIES} attempts. Please check your device settings and try again.`)
+        setIsTracking(false)
+        clearInterval(timerRef.current)
+      }
+    }
+
+    try {
+      navigator.geolocation.getCurrentPosition(handleSuccess, handleError, options)
+    } catch (error) {
+      console.error('Error starting geolocation:', error)
+      handleError(error)
+    }
+  }
+
+  // New function to handle continuous location watching
+  const startContinuousWatching = () => {
+    if (!navigator.geolocation) return
+
+    const options = {
+      enableHighAccuracy: true,
+      maximumAge: 0,
+      timeout: 15000
+    }
+
+    try {
+      watchIdRef.current = navigator.geolocation.watchPosition(
         (position) => {
-          const initialPoint = {
+          console.log('Location update received:', position)
+          const newPoint = {
             lat: position.coords.latitude,
             lng: position.coords.longitude,
             timestamp: new Date().toISOString()
           }
-          setCurrentLocation(initialPoint)
-          setRoute([initialPoint])
-          setLastRecordedPoint(initialPoint)
+
+          // Update last update time
           lastUpdateTimeRef.current = new Date()
 
-          // Then start continuous watching
-          watchIdRef.current = navigator.geolocation.watchPosition(
-            (position) => {
-              const newPoint = {
-                lat: position.coords.latitude,
-                lng: position.coords.longitude,
-                timestamp: new Date().toISOString()
-              }
+          // Always update current location marker
+          setCurrentLocation(newPoint)
 
-              // Update last update time
-              lastUpdateTimeRef.current = new Date()
-
-              // Always update current location marker
-              setCurrentLocation(newPoint)
-
-              // If this is the first point or distance > 100m, record it
-              if (!lastRecordedPoint || 
-                  calculateDistance(
-                    lastRecordedPoint.lat, 
-                    lastRecordedPoint.lng, 
-                    newPoint.lat, 
-                    newPoint.lng
-                  ) > 100) {
-                setRoute(prevRoute => [...prevRoute, newPoint])
-                setLastRecordedPoint(newPoint)
-              }
-            },
-            (error) => {
-              console.error('Geolocation error:', error)
-              setGeoError(`Location error: ${error.message}. Please ensure location services are enabled.`)
-            },
-            {
-              enableHighAccuracy: true,
-              maximumAge: 0,
-              timeout: 10000 // Increased timeout to 10 seconds
-            }
-          )
+          // If this is the first point or distance > 100m, record it
+          if (!lastRecordedPoint || 
+              calculateDistance(
+                lastRecordedPoint.lat, 
+                lastRecordedPoint.lng, 
+                newPoint.lat, 
+                newPoint.lng
+              ) > 100) {
+            setRoute(prevRoute => [...prevRoute, newPoint])
+            setLastRecordedPoint(newPoint)
+          }
         },
         (error) => {
-          console.error('Initial geolocation error:', error)
-          setGeoError(`Initial location error: ${error.message}. Please ensure location services are enabled.`)
-          setIsTracking(false)
-          clearInterval(timerRef.current)
+          console.error('Watch position error:', error)
+          setGeoError(`Location update error: ${error.message}. Trying to recover...`)
+          
+          // Try to restart watching if we lose connection
+          if (watchIdRef.current) {
+            navigator.geolocation.clearWatch(watchIdRef.current)
+            watchIdRef.current = null
+          }
+          setTimeout(() => {
+            startContinuousWatching()
+          }, 1000)
         },
-        {
-          enableHighAccuracy: true,
-          maximumAge: 0,
-          timeout: 10000 // Increased timeout to 10 seconds
-        }
+        options
       )
-    } else {
-      setGeoError('Geolocation is not supported by your browser.')
-      setIsTracking(false)
-      clearInterval(timerRef.current)
+    } catch (error) {
+      console.error('Error starting watch position:', error)
+      setGeoError('Error starting location tracking. Please try again.')
     }
   }
 
@@ -608,6 +666,17 @@ function App() {
                 <AlertIcon />
                 {mapError}
               </Alert>
+            </Center>
+          )}
+          {isGettingLocation && (
+            <Center position="absolute" top={0} left={0} right={0} bottom={0} bg="gray.50" zIndex={1}>
+              <VStack>
+                <Spinner size="xl" />
+                <Text>Getting your location...</Text>
+                <Text fontSize="sm" color="gray.500">
+                  Attempt {locationRetryCountRef.current + 1} of {MAX_RETRIES}
+                </Text>
+              </VStack>
             </Center>
           )}
           <div ref={mapContainer} style={{ width: '100%', height: '100%', visibility: mapLoading ? 'hidden' : 'visible' }} />
