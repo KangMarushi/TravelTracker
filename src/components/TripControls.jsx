@@ -14,7 +14,7 @@ import {
   Tooltip,
   useColorModeValue
 } from '@chakra-ui/react';
-import { FaPlay, FaPause, FaStop, FaCog } from 'react-icons/fa';
+import { TriangleUpIcon, RepeatIcon, CloseIcon } from '@chakra-ui/icons';
 import { saveSettings } from '../utils/geolocation';
 
 const TripControls = ({
@@ -156,7 +156,7 @@ const TripControls = ({
             size="lg"
             width="200px"
             boxShadow="md"
-            leftIcon={<FaPlay />}
+            leftIcon={<TriangleUpIcon />}
           >
             Start Trip
           </Button>
@@ -166,7 +166,7 @@ const TripControls = ({
               <Tooltip label="Resume tracking">
                 <IconButton
                   aria-label="Resume tracking"
-                  icon={<FaPlay />}
+                  icon={<TriangleUpIcon />}
                   colorScheme="green"
                   size="lg"
                   onClick={onResume}
@@ -176,7 +176,7 @@ const TripControls = ({
               <Tooltip label="Pause tracking">
                 <IconButton
                   aria-label="Pause tracking"
-                  icon={<FaPause />}
+                  icon={<RepeatIcon />}
                   colorScheme="yellow"
                   size="lg"
                   onClick={onPause}
@@ -186,7 +186,7 @@ const TripControls = ({
             <Tooltip label="Stop tracking">
               <IconButton
                 aria-label="Stop tracking"
-                icon={<FaStop />}
+                icon={<CloseIcon />}
                 colorScheme="red"
                 size="lg"
                 onClick={onStop}
