@@ -3,6 +3,8 @@ import { debounce } from 'lodash';
 // Cache for geocoding results
 const geocodeCache = new Map();
 
+const MAPTILER_KEY = import.meta.env.VITE_MAPTILER_API_KEY;
+
 // Debounced function to get address from coordinates
 export const getAddressFromCoordinates = debounce(async (lat, lng) => {
   const cacheKey = `${lat},${lng}`;
@@ -14,7 +16,7 @@ export const getAddressFromCoordinates = debounce(async (lat, lng) => {
 
   try {
     const response = await fetch(
-      `https://api.maptiler.com/geocoding/${lng},${lat}.json?key=${import.meta.env.VITE_MAPTILER_API_KEY}`
+      `https://api.maptiler.com/geocoding/${lng},${lat}.json?key=${MAPTILER_KEY}`
     );
     const data = await response.json();
     
