@@ -42,7 +42,7 @@ function App() {
   const [mapError, setMapError] = useState(null)
   const timerRef = useRef(null)
   const geoRef = useRef(null)
-  const mapContainer = useRef(null)
+  const mapContainerRef = useRef(null)
   const mapRef = useRef(null)
   const markerRef = useRef(null)
   const routeLayerId = 'route-line'
@@ -74,6 +74,7 @@ function App() {
   const [lastAddressUpdate, setLastAddressUpdate] = useState(0)
   const [isInitializing, setIsInitializing] = useState(true)
   const initialWatchIdRef = useRef(null)
+  const [error, setError] = useState(null)
 
   // Add beforeunload handler
   useEffect(() => {
@@ -228,72 +229,115 @@ function App() {
     }
   }, [isTracking, route, startTime, lastRecordedPoint, currentLocation, currentAddress])
 
-  // Initialize map with error handling
+  // Initialize map
   useEffect(() => {
-    if (!mapContainer.current) return
+    if (!mapContainerRef.current || mapRef.current) return;
 
-    setMapLoading(true)
-    setMapError(null)
+    try {
+      setMapLoading(true);
+      setMapError(null);
 
-    // Add a small delay to ensure the container is ready
-    const timer = setTimeout(() => {
-      try {
-        const map = new maplibregl.Map({
-          container: mapContainer.current,
-          style: `https://api.maptiler.com/maps/streets-v2/style.json?key=${MAPTILER_KEY}`,
-          center: [78.6937, 10.7905], // Trichy coordinates
-          zoom: 15
-        })
+      const map = new maplibregl.Map({
+        container: mapContainerRef.current,
+        style: `https://api.maptiler.com/maps/streets-v2/style.json?key=${import.meta.env.VITE_MAPTILER_API_KEY}`,
+        center: [78.6937, 10.7905], // Default to Trichy
+        zoom: 13
+      });
 
-        map.on('load', () => {
-          setMapLoading(false)
-          // Add current location marker source and layer
-          map.addSource(currentLocationLayerId, {
-            type: 'geojson',
-            data: {
-              type: 'Feature',
-              geometry: {
-                type: 'Point',
-                coordinates: [0, 0]
-              }
-            }
-          })
+      map.on('load', () => {
+        console.log('Map loaded successfully');
+        mapRef.current = map;
+        setMapLoading(false);
+        // Start initial location tracking after map is loaded
+        startInitialLocationTracking();
+      });
 
-          map.addLayer({
-            id: currentLocationLayerId,
-            type: 'symbol',
-            source: currentLocationLayerId,
-            layout: {
-              'text-field': '🚶',
-              'text-size': 24,
-              'text-allow-overlap': true,
-              'text-ignore-placement': true,
-              'text-anchor': 'center'
-            }
-          })
+      map.on('error', (e) => {
+        console.error('Map error:', e);
+        setMapError('Error loading map. Please check your internet connection and refresh the page.');
+        setMapLoading(false);
+      });
 
-          // Store map reference
-          mapRef.current = map
-        })
-
-        map.on('error', (e) => {
-          console.error('Map error:', e)
-          setMapError('Failed to load map. Please try refreshing the page.')
-          setMapLoading(false)
-        })
-
-        return () => {
-          map.remove()
+      return () => {
+        if (map) {
+          map.remove();
+          mapRef.current = null;
         }
-      } catch (error) {
-        console.error('Map initialization error:', error)
-        setMapError('Failed to initialize map. Please try refreshing the page.')
-        setMapLoading(false)
-      }
-    }, 100)
+      };
+    } catch (error) {
+      console.error('Error initializing map:', error);
+      setMapError('Failed to initialize map. Please refresh the page.');
+      setMapLoading(false);
+    }
+  }, []);
 
-    return () => clearTimeout(timer)
-  }, [])
+  // Start initial location tracking
+  const startInitialLocationTracking = () => {
+    if (!navigator.geolocation) {
+      setError('Geolocation is not supported by your browser');
+      setIsInitializing(false);
+      return;
+    }
+
+    const options = {
+      enableHighAccuracy: true,
+      timeout: 10000,
+      maximumAge: 0
+    };
+
+    try {
+      initialWatchIdRef.current = navigator.geolocation.watchPosition(
+        (position) => {
+          const { latitude, longitude } = position.coords;
+          setCurrentLocation([latitude, longitude]);
+          
+          // Update map center if map is ready
+          if (mapRef.current) {
+            mapRef.current.setCenter([longitude, latitude]);
+            
+            // Update or add the current location marker
+            if (currentLocationMarkerRef.current) {
+              currentLocationMarkerRef.current.setLngLat([longitude, latitude]);
+            } else {
+              currentLocationMarkerRef.current = new maplibregl.Marker({
+                element: createMarkerElement('🧍'),
+                anchor: 'bottom'
+              })
+                .setLngLat([longitude, latitude])
+                .addTo(mapRef.current);
+            }
+          }
+
+          // Get initial address
+          getAddressFromCoordinates(latitude, longitude);
+          setIsInitializing(false);
+        },
+        (error) => {
+          console.error('Initial geolocation error:', error);
+          setError(`Error getting initial location: ${error.message}`);
+          setIsInitializing(false);
+        },
+        options
+      );
+    } catch (error) {
+      console.error('Error starting location tracking:', error);
+      setError('Failed to start location tracking');
+      setIsInitializing(false);
+    }
+  };
+
+  // Cleanup function
+  useEffect(() => {
+    return () => {
+      if (initialWatchIdRef.current) {
+        navigator.geolocation.clearWatch(initialWatchIdRef.current);
+      }
+      if (mapRef.current) {
+        mapRef.current.remove();
+        mapRef.current = null;
+      }
+    };
+  }, []);
 
   // Update map with route and marker
   useEffect(() => {
@@ -476,61 +520,12 @@ function App() {
     setWatchId(watchId)
   }
 
-  // Add new function for initial location tracking
-  const startInitialLocationTracking = () => {
-    if (!navigator.geolocation) {
-      setError('Geolocation is not supported by your browser');
-      setIsInitializing(false);
-      return;
-    }
-
-    const options = {
-      enableHighAccuracy: true,
-      timeout: 10000,
-      maximumAge: 0
-    };
-
-    initialWatchIdRef.current = navigator.geolocation.watchPosition(
-      (position) => {
-        const { latitude, longitude } = position.coords;
-        setCurrentLocation([latitude, longitude]);
-        
-        // Update map center if map is ready
-        if (mapRef.current) {
-          mapRef.current.setCenter([longitude, latitude]);
-          
-          // Update or add the current location marker
-          if (currentLocationMarkerRef.current) {
-            currentLocationMarkerRef.current.setLngLat([longitude, latitude]);
-          } else {
-            currentLocationMarkerRef.current = new maplibregl.Marker({
-              element: createMarkerElement('🧍'),
-              anchor: 'bottom'
-            })
-              .setLngLat([longitude, latitude])
-              .addTo(mapRef.current);
-          }
-        }
-
-        // Get initial address
-        getAddressFromCoordinates(latitude, longitude);
-        setIsInitializing(false);
-      },
-      (error) => {
-        console.error('Initial geolocation error:', error);
-        setError(`Error getting initial location: ${error.message}`);
-        setIsInitializing(false);
-      },
-      options
-    );
-  };
-
   // Update the useEffect for map initialization
   useEffect(() => {
-    if (mapContainer.current && !mapRef.current) {
+    if (mapContainerRef.current && !mapRef.current) {
       setIsInitializing(true);
       const map = new maplibregl.Map({
-        container: mapContainer.current,
+        container: mapContainerRef.current,
         style: `https://api.maptiler.com/maps/streets-v2/style.json?key=${import.meta.env.VITE_MAPTILER_API_KEY}`,
         center: [78.6937, 10.7905], // Default to Trichy
         zoom: 13
@@ -884,7 +879,7 @@ function App() {
                 </VStack>
               </Center>
             )}
-            <div ref={mapContainer} style={{ width: '100%', height: '100%', visibility: mapLoading ? 'hidden' : 'visible' }} />
+            <div ref={mapContainerRef} style={{ width: '100%', height: '100%', visibility: mapLoading ? 'hidden' : 'visible' }} />
             {!isTracking && route.length === 0 && !mapLoading && !mapError && (
               <Text color="gray.400" textAlign="center" mt={4}>No location points recorded yet. Start a trip to begin tracking.</Text>
             )}
