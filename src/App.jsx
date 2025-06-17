@@ -1,4 +1,4 @@
-import { Box, Heading, Text, Container, Button, HStack, VStack, Divider, useToast, Modal, ModalOverlay, ModalContent, ModalHeader, ModalBody, ModalFooter, ModalCloseButton, Input, Textarea, FormControl, FormLabel, List, ListItem, IconButton, Spinner, Badge, Flex, Alert, AlertIcon } from '@chakra-ui/react'
+import { Box, Heading, Text, Container, Button, HStack, VStack, Divider, useToast, Modal, ModalOverlay, ModalContent, ModalHeader, ModalBody, ModalFooter, ModalCloseButton, Input, Textarea, FormControl, FormLabel, List, ListItem, IconButton, Spinner, Badge, Flex, Alert, AlertIcon, Center } from '@chakra-ui/react'
 import { StarIcon } from '@chakra-ui/icons'
 import { useState, useRef, useEffect } from 'react'
 import maplibregl from 'maplibre-gl'
@@ -21,6 +21,8 @@ function App() {
   const [showTripModal, setShowTripModal] = useState(false)
   const [favoriteLoading, setFavoriteLoading] = useState(false)
   const [geoError, setGeoError] = useState(null)
+  const [mapLoading, setMapLoading] = useState(true)
+  const [mapError, setMapError] = useState(null)
   const timerRef = useRef(null)
   const geoRef = useRef(null)
   const mapContainer = useRef(null)
@@ -79,16 +81,48 @@ function App() {
     }
   }, [isTracking, route, startTime])
 
-  // Initialize map
+  // Initialize map with error handling
   useEffect(() => {
     if (!mapContainer.current) return
     if (mapRef.current) return // Only initialize once
-    mapRef.current = new maplibregl.Map({
-      container: mapContainer.current,
-      style: `https://api.maptiler.com/maps/streets/style.json?key=${MAPTILER_KEY}`,
-      center: [10.799326633067423, 78.68743620912605], // Default to Trichy
-      zoom: 10,
-    })
+
+    try {
+      setMapLoading(true)
+      setMapError(null)
+      
+      // Wait for the container to be ready
+      setTimeout(() => {
+        if (!mapContainer.current) return
+        
+        mapRef.current = new maplibregl.Map({
+          container: mapContainer.current,
+          style: `https://api.maptiler.com/maps/streets/style.json?key=${MAPTILER_KEY}`,
+          center: [78.68, 10.79], // Default to Trichy
+          zoom: 10,
+        })
+
+        mapRef.current.on('load', () => {
+          setMapLoading(false)
+        })
+
+        mapRef.current.on('error', (e) => {
+          console.error('Map error:', e)
+          setMapError('Failed to load map. Please refresh the page.')
+          setMapLoading(false)
+        })
+      }, 100) // Small delay to ensure container is ready
+    } catch (error) {
+      console.error('Map initialization error:', error)
+      setMapError('Failed to initialize map. Please refresh the page.')
+      setMapLoading(false)
+    }
+
+    return () => {
+      if (mapRef.current) {
+        mapRef.current.remove()
+        mapRef.current = null
+      }
+    }
   }, [])
 
   // Update map with route and marker
@@ -137,13 +171,6 @@ function App() {
       })
     }
   }, [route])
-
-  // Clean up map on unmount
-  useEffect(() => {
-    return () => {
-      if (mapRef.current) mapRef.current.remove()
-    }
-  }, [])
 
   // Improved: Start trip recording
   const handleStart = () => {
@@ -349,9 +376,22 @@ function App() {
             </Box>
           )}
         </Box>
-        <Box p={0} borderWidth={1} borderRadius="lg" bg="gray.50" minH="400px" height="400px" overflow="hidden">
-          <div ref={mapContainer} style={{ width: '100%', height: '100%' }} />
-          {!isTracking && route.length === 0 && (
+        <Box p={0} borderWidth={1} borderRadius="lg" bg="gray.50" minH="400px" height="400px" overflow="hidden" position="relative">
+          {mapLoading && (
+            <Center position="absolute" top={0} left={0} right={0} bottom={0} bg="gray.50">
+              <Spinner size="xl" color="teal.500" />
+            </Center>
+          )}
+          {mapError && (
+            <Center position="absolute" top={0} left={0} right={0} bottom={0} bg="gray.50">
+              <Alert status="error">
+                <AlertIcon />
+                {mapError}
+              </Alert>
+            </Center>
+          )}
+          <div ref={mapContainer} style={{ width: '100%', height: '100%', visibility: mapLoading ? 'hidden' : 'visible' }} />
+          {!isTracking && route.length === 0 && !mapLoading && !mapError && (
             <Text color="gray.400" textAlign="center" mt={4}>No location points recorded yet. Start a trip to begin tracking.</Text>
           )}
         </Box>
