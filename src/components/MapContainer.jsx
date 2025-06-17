@@ -58,6 +58,10 @@ const MapContainer = ({
       setMapLoading(true);
       setMapError(null);
 
+      if (!import.meta.env.VITE_MAPTILER_API_KEY) {
+        throw new Error('MapTiler API key is not configured');
+      }
+
       const map = new maplibregl.Map({
         container: mapContainerRef.current,
         style: `https://api.maptiler.com/maps/streets-v2/style.json?key=${import.meta.env.VITE_MAPTILER_API_KEY}`,
@@ -86,16 +90,14 @@ const MapContainer = ({
 
     } catch (error) {
       console.error('Error initializing map:', error);
-      setMapError('Failed to initialize map. Please refresh the page and try again.');
+      setMapError(error.message || 'Failed to initialize map. Please refresh the page and try again.');
       setMapLoading(false);
       onMapError?.(error);
     }
   };
 
   useEffect(() => {
-    if (isTracking && !mapRef.current) {
-      initializeMap();
-    }
+    initializeMap();
 
     return () => {
       if (mapRef.current) {
@@ -103,25 +105,15 @@ const MapContainer = ({
         mapRef.current = null;
       }
     };
-  }, [isTracking]);
+  }, []);
 
   useEffect(() => {
-    if (mapRef.current && currentLocation) {
+    if (isTracking && mapRef.current && currentLocation) {
       const [latitude, longitude] = currentLocation;
       mapRef.current.setCenter([longitude, latitude]);
-
-      if (markerRef.current) {
-        markerRef.current.setLngLat([longitude, latitude]);
-      } else {
-        markerRef.current = new maplibregl.Marker({
-          element: createMarkerElement('🧍'),
-          anchor: 'bottom'
-        })
-          .setLngLat([longitude, latitude])
-          .addTo(mapRef.current);
-      }
+      mapRef.current.setZoom(15);
     }
-  }, [currentLocation]);
+  }, [isTracking, currentLocation]);
 
   useEffect(() => {
     if (mapRef.current && route.length > 0) {
@@ -178,13 +170,15 @@ const MapContainer = ({
   return (
     <MapErrorBoundary>
       <Box 
-        height="400px" 
+        height="100%"
+        width="100%"
         position="relative" 
         borderRadius="md" 
         overflow="hidden"
         boxShadow="md"
         borderWidth={1}
         borderColor="gray.200"
+        bg="white"
       >
         {mapLoading && (
           <Center position="absolute" top={0} left={0} right={0} bottom={0} bg="white" zIndex={1}>
@@ -215,6 +209,7 @@ const MapContainer = ({
           height="100%"
           width="100%"
           display={mapLoading ? 'none' : 'block'}
+          bg="gray.50"
         />
       </Box>
     </MapErrorBoundary>

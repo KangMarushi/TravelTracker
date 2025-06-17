@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { ChakraProvider, Container, Heading, VStack } from '@chakra-ui/react';
+import { ChakraProvider, Container, Heading, VStack, Alert, AlertIcon } from '@chakra-ui/react';
 import { useTripTracker } from './hooks/useTripTracker';
 import { loadSettings, getAddressFromCoordinates } from './utils/geolocation';
 import MapContainer from './components/MapContainer';
@@ -18,6 +18,7 @@ function App() {
   const [isLoadingAddress, setIsLoadingAddress] = useState(false);
   const [showSummary, setShowSummary] = useState(false);
   const [geoError, setGeoError] = useState(null);
+  const [mapError, setMapError] = useState(null);
 
   // Use the trip tracker hook
   const {
@@ -63,43 +64,61 @@ function App() {
     console.log('Saving trip:', tripData);
   };
 
+  // Handle map errors
+  const handleMapError = (error) => {
+    console.error('Map error:', error);
+    setMapError(error.message || 'Error loading map. Please check your internet connection and try again.');
+  };
+
   return (
     <ChakraProvider>
-      <Container maxW="container.md" py={10}>
-        <VStack spacing={4} align="stretch">
-          <Heading size="lg" color="blue.600">Travel Tracker</Heading>
+      <div className="app-container">
+        <Container maxW="container.xl" py={4}>
+          <VStack spacing={4} align="stretch">
+            <Heading size="lg" color="blue.600">Travel Tracker</Heading>
 
-          <TripControls
-            isTracking={isTracking}
-            recordingMode={recordingMode}
-            recordingInterval={recordingInterval}
-            recordingDistance={recordingDistance}
-            currentAddress={currentAddress}
-            isLoadingAddress={isLoadingAddress}
-            geoError={geoError}
-            route={route}
-            elapsed={elapsed}
-            onStart={startTracking}
-            onStop={handleStop}
-            onRecordingModeChange={setRecordingMode}
-            onIntervalChange={setRecordingInterval}
-            onDistanceChange={setRecordingDistance}
+            {mapError && (
+              <Alert status="error" variant="subtle" borderRadius="md">
+                <AlertIcon />
+                {mapError}
+              </Alert>
+            )}
+
+            <TripControls
+              isTracking={isTracking}
+              recordingMode={recordingMode}
+              recordingInterval={recordingInterval}
+              recordingDistance={recordingDistance}
+              currentAddress={currentAddress}
+              isLoadingAddress={isLoadingAddress}
+              geoError={geoError}
+              route={route}
+              elapsed={elapsed}
+              onStart={startTracking}
+              onStop={handleStop}
+              onRecordingModeChange={setRecordingMode}
+              onIntervalChange={setRecordingInterval}
+              onDistanceChange={setRecordingDistance}
+            />
+
+            <div className="map-container">
+              <MapContainer
+                isTracking={isTracking}
+                currentLocation={currentLocation}
+                route={route}
+                onMapError={handleMapError}
+              />
+            </div>
+          </VStack>
+
+          <TripSummaryModal
+            isOpen={showSummary}
+            onClose={() => setShowSummary(false)}
+            stats={tripStats}
+            onSave={handleSaveTrip}
           />
-
-          <MapContainer
-            isTracking={isTracking}
-            currentLocation={currentLocation}
-            route={route}
-          />
-        </VStack>
-
-        <TripSummaryModal
-          isOpen={showSummary}
-          onClose={() => setShowSummary(false)}
-          stats={tripStats}
-          onSave={handleSaveTrip}
-        />
-      </Container>
+        </Container>
+      </div>
     </ChakraProvider>
   );
 }
