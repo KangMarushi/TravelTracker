@@ -6,6 +6,22 @@ import { supabase } from './supabaseClient'
 
 const MAPTILER_KEY = 'Uu2plMpWPcX4fjAFpFNr'
 
+// Helper function to calculate distance between two points in meters
+function calculateDistance(lat1, lon1, lat2, lon2) {
+  const R = 6371e3; // Earth's radius in meters
+  const φ1 = lat1 * Math.PI/180;
+  const φ2 = lat2 * Math.PI/180;
+  const Δφ = (lat2-lat1) * Math.PI/180;
+  const Δλ = (lon2-lon1) * Math.PI/180;
+
+  const a = Math.sin(Δφ/2) * Math.sin(Δφ/2) +
+          Math.cos(φ1) * Math.cos(φ2) *
+          Math.sin(Δλ/2) * Math.sin(Δλ/2);
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+
+  return R * c; // Distance in meters
+}
+
 function App() {
   const [isTracking, setIsTracking] = useState(false)
   const [route, setRoute] = useState([])
@@ -30,40 +46,64 @@ function App() {
   const markerRef = useRef(null)
   const routeLayerId = 'route-line'
   const toast = useToast()
+  const [lastRecordedPoint, setLastRecordedPoint] = useState(null)
+  const watchIdRef = useRef(null)
+  const [currentLocation, setCurrentLocation] = useState(null)
+  const currentLocationMarkerRef = useRef(null)
+  const currentLocationLayerId = 'current-location'
 
   // Restore trip state from localStorage on page load
   useEffect(() => {
     const savedTrip = localStorage.getItem('currentTrip')
     if (savedTrip) {
-      const { isTracking, route, startTime } = JSON.parse(savedTrip)
+      const { isTracking, route, startTime, lastRecordedPoint: savedLastPoint, currentLocation: savedLocation } = JSON.parse(savedTrip)
       setIsTracking(isTracking)
       setRoute(route)
       setStartTime(startTime ? new Date(startTime) : null)
+      setLastRecordedPoint(savedLastPoint)
+      setCurrentLocation(savedLocation)
+      
       if (isTracking && startTime) {
         setElapsed(Math.floor((new Date() - new Date(startTime)) / 1000))
         // Restart the timer
         timerRef.current = setInterval(() => {
           setElapsed(Math.floor((new Date() - new Date(startTime)) / 1000))
         }, 1000)
-        // Restart geolocation tracking
-        geoRef.current = setInterval(() => {
-          if (navigator.geolocation) {
-            navigator.geolocation.getCurrentPosition(
-              pos => {
-                setRoute(r => [...r, {
-                  lat: pos.coords.latitude,
-                  lng: pos.coords.longitude,
-                  timestamp: new Date().toISOString()
-                }])
-              },
-              err => {
-                setGeoError(err.message)
+        
+        // Restart position watching
+        if (navigator.geolocation) {
+          watchIdRef.current = navigator.geolocation.watchPosition(
+            (position) => {
+              const newPoint = {
+                lat: position.coords.latitude,
+                lng: position.coords.longitude,
+                timestamp: new Date().toISOString()
               }
-            )
-          } else {
-            setGeoError('Geolocation is not supported by your browser.')
-          }
-        }, 20000)
+
+              // Always update current location marker
+              setCurrentLocation(newPoint)
+
+              if (!savedLastPoint || 
+                  calculateDistance(
+                    savedLastPoint.lat, 
+                    savedLastPoint.lng, 
+                    newPoint.lat, 
+                    newPoint.lng
+                  ) > 100) {
+                setRoute(prevRoute => [...prevRoute, newPoint])
+                setLastRecordedPoint(newPoint)
+              }
+            },
+            (error) => {
+              setGeoError(error.message)
+            },
+            {
+              enableHighAccuracy: true,
+              maximumAge: 0,
+              timeout: 5000
+            }
+          )
+        }
       }
     }
   }, [])
@@ -74,12 +114,14 @@ function App() {
       localStorage.setItem('currentTrip', JSON.stringify({
         isTracking,
         route,
-        startTime: startTime ? startTime.toISOString() : null
+        startTime: startTime ? startTime.toISOString() : null,
+        lastRecordedPoint,
+        currentLocation
       }))
     } else {
       localStorage.removeItem('currentTrip')
     }
-  }, [isTracking, route, startTime])
+  }, [isTracking, route, startTime, lastRecordedPoint, currentLocation])
 
   // Initialize map with error handling
   useEffect(() => {
@@ -103,6 +145,28 @@ function App() {
 
         mapRef.current.on('load', () => {
           setMapLoading(false)
+          // Add current location marker source and layer
+          mapRef.current.addSource(currentLocationLayerId, {
+            type: 'geojson',
+            data: {
+              type: 'Feature',
+              geometry: {
+                type: 'Point',
+                coordinates: [0, 0]
+              }
+            }
+          })
+
+          mapRef.current.addLayer({
+            id: currentLocationLayerId,
+            type: 'symbol',
+            source: currentLocationLayerId,
+            layout: {
+              'text-field': '🚶',
+              'text-size': 24,
+              'text-allow-overlap': true
+            }
+          })
         })
 
         mapRef.current.on('error', (e) => {
@@ -172,49 +236,70 @@ function App() {
     }
   }, [route])
 
+  // Update current location marker
+  useEffect(() => {
+    if (!mapRef.current || !currentLocation) return
+
+    const source = mapRef.current.getSource(currentLocationLayerId)
+    if (source) {
+      source.setData({
+        type: 'Feature',
+        geometry: {
+          type: 'Point',
+          coordinates: [currentLocation.lng, currentLocation.lat]
+        }
+      })
+    }
+  }, [currentLocation])
+
   // Improved: Start trip recording
   const handleStart = () => {
     setIsTracking(true)
     setRoute([])
     setGeoError(null)
+    setLastRecordedPoint(null)
+    setCurrentLocation(null)
     const now = new Date()
     setStartTime(now)
     setElapsed(0)
+    
     // Timer for elapsed time
     timerRef.current = setInterval(() => {
       setElapsed(Math.floor((new Date() - now) / 1000))
     }, 1000)
-    // Geolocation tracking every 20s
-    geoRef.current = setInterval(() => {
-      if (navigator.geolocation) {
-        navigator.geolocation.getCurrentPosition(
-          pos => {
-            setRoute(r => [...r, {
-              lat: pos.coords.latitude,
-              lng: pos.coords.longitude,
-              timestamp: new Date().toISOString()
-            }])
-          },
-          err => {
-            setGeoError(err.message)
-          }
-        )
-      } else {
-        setGeoError('Geolocation is not supported by your browser.')
-      }
-    }, 20000)
-    // Get initial point immediately
+
+    // Start watching position
     if (navigator.geolocation) {
-      navigator.geolocation.getCurrentPosition(
-        pos => {
-          setRoute(r => [...r, {
-            lat: pos.coords.latitude,
-            lng: pos.coords.longitude,
+      watchIdRef.current = navigator.geolocation.watchPosition(
+        (position) => {
+          const newPoint = {
+            lat: position.coords.latitude,
+            lng: position.coords.longitude,
             timestamp: new Date().toISOString()
-          }])
+          }
+
+          // Always update current location marker
+          setCurrentLocation(newPoint)
+
+          // If this is the first point or distance > 100m, record it
+          if (!lastRecordedPoint || 
+              calculateDistance(
+                lastRecordedPoint.lat, 
+                lastRecordedPoint.lng, 
+                newPoint.lat, 
+                newPoint.lng
+              ) > 100) {
+            setRoute(prevRoute => [...prevRoute, newPoint])
+            setLastRecordedPoint(newPoint)
+          }
         },
-        err => {
-          setGeoError(err.message)
+        (error) => {
+          setGeoError(error.message)
+        },
+        {
+          enableHighAccuracy: true,
+          maximumAge: 0,
+          timeout: 5000
         }
       )
     } else {
@@ -226,8 +311,12 @@ function App() {
   const handleStop = () => {
     setIsTracking(false)
     clearInterval(timerRef.current)
-    clearInterval(geoRef.current)
-    localStorage.removeItem('currentTrip') // Clear saved trip from localStorage
+    if (watchIdRef.current) {
+      navigator.geolocation.clearWatch(watchIdRef.current)
+      watchIdRef.current = null
+    }
+    setCurrentLocation(null)
+    localStorage.removeItem('currentTrip')
     setShowSave(true)
   }
 
