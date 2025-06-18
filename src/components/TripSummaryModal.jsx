@@ -90,6 +90,17 @@ const TripSummaryModal = ({ isOpen, onClose, stats, onSave }) => {
   };
 
   if (!stats) return null;
+  const safeStats = {
+    distance: 0,
+    duration: 0,
+    averageSpeed: 0,
+    maxSpeed: 0,
+    elevationGain: 0,
+    elevationLoss: 0,
+    points: 0,
+    route: [],
+    ...stats
+  };
 
   return (
     <Modal isOpen={isOpen} onClose={onClose} size="md">
@@ -112,11 +123,11 @@ const TripSummaryModal = ({ isOpen, onClose, stats, onSave }) => {
                 </HStack>
                 <HStack justify="space-between">
                   <Text>Average Speed:</Text>
-                  <Text fontWeight="medium">{formatSpeed(stats.avgSpeed)}</Text>
+                  <Text fontWeight="medium">{formatSpeed(safeStats.averageSpeed)}</Text>
                 </HStack>
                 <HStack justify="space-between">
                   <Text>Max Speed:</Text>
-                  <Text fontWeight="medium">{formatSpeed(stats.maxSpeed)}</Text>
+                  <Text fontWeight="medium">{formatSpeed(safeStats.maxSpeed)}</Text>
                 </HStack>
                 {stats.elevationGain > 0 && (
                   <HStack justify="space-between">

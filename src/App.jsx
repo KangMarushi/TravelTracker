@@ -136,7 +136,7 @@ function App() {
                 <MapContainer
                   isTracking={isTracking}
                   currentLocation={currentLocation}
-                  route={route}
+                  route={route || []}
                   onMapError={handleMapError}
                 />
               </div>
@@ -163,7 +163,7 @@ function App() {
           <TripSummaryModal
             isOpen={showSummary}
             onClose={() => setShowSummary(false)}
-            stats={tripStats}
+            stats={tripStats || { distance: 0, duration: 0, averageSpeed: 0, maxSpeed: 0, elevationGain: 0, elevationLoss: 0, points: 0, route: [] }}
             onSave={handleSaveTrip}
             isSaving={isSaving}
           />
