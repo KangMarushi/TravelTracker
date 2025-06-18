@@ -90,17 +90,15 @@ const TripSummaryModal = ({ isOpen, onClose, stats, onSave }) => {
   };
 
   if (!stats) return null;
-  const safeStats = {
-    distance: 0,
-    duration: 0,
-    averageSpeed: 0,
-    maxSpeed: 0,
-    elevationGain: 0,
-    elevationLoss: 0,
-    points: 0,
-    route: [],
-    ...stats
-  };
+  const {
+    distance = 0,
+    duration = 0,
+    averageSpeed = 0,
+    maxSpeed = 0,
+    elevationGain = 0,
+    elevationLoss = 0,
+    route = []
+  } = stats || {};
 
   return (
     <Modal isOpen={isOpen} onClose={onClose} size="md">
@@ -115,30 +113,30 @@ const TripSummaryModal = ({ isOpen, onClose, stats, onSave }) => {
               <VStack spacing={2} align="stretch" bg="gray.50" p={4} borderRadius="md">
                 <HStack justify="space-between">
                   <Text>Distance:</Text>
-                  <Text fontWeight="medium">{formatDistance(stats.distance)}</Text>
+                  <Text fontWeight="medium">{formatDistance(distance)}</Text>
                 </HStack>
                 <HStack justify="space-between">
                   <Text>Duration:</Text>
-                  <Text fontWeight="medium">{formatDuration(stats.duration)}</Text>
+                  <Text fontWeight="medium">{formatDuration(duration)}</Text>
                 </HStack>
                 <HStack justify="space-between">
                   <Text>Average Speed:</Text>
-                  <Text fontWeight="medium">{formatSpeed(safeStats.averageSpeed)}</Text>
+                  <Text fontWeight="medium">{formatSpeed(averageSpeed)}</Text>
                 </HStack>
                 <HStack justify="space-between">
                   <Text>Max Speed:</Text>
-                  <Text fontWeight="medium">{formatSpeed(safeStats.maxSpeed)}</Text>
+                  <Text fontWeight="medium">{formatSpeed(maxSpeed)}</Text>
                 </HStack>
-                {stats.elevationGain > 0 && (
+                {elevationGain > 0 && (
                   <HStack justify="space-between">
                     <Text>Elevation Gain:</Text>
-                    <Text fontWeight="medium">{Math.round(stats.elevationGain)}m</Text>
+                    <Text fontWeight="medium">{Math.round(elevationGain)}m</Text>
                   </HStack>
                 )}
-                {stats.elevationLoss > 0 && (
+                {elevationLoss > 0 && (
                   <HStack justify="space-between">
                     <Text>Elevation Loss:</Text>
-                    <Text fontWeight="medium">{Math.round(stats.elevationLoss)}m</Text>
+                    <Text fontWeight="medium">{Math.round(elevationLoss)}m</Text>
                   </HStack>
                 )}
               </VStack>
