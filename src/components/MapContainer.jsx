@@ -150,18 +150,29 @@ const MapContainer = ({
 
   useEffect(() => {
     console.log('Map initialization effect triggered');
-    const timer = setTimeout(() => {
-      initializeMap();
-    }, 100);
+    
+    const raf = requestAnimationFrame(() => {
+      if (mapContainerRef.current) {
+        console.log('Container found, initializing map...');
+        initializeMap();
+      } else {
+        console.warn('Map container still not ready, retrying via animation frame...');
+        if (retryCount < MAX_RETRIES) {
+          setRetryCount(prev => prev + 1);
+        } else {
+          console.error('Max retries reached, map initialization failed');
+        }
+      }
+    });
 
     return () => {
-      clearTimeout(timer);
+      cancelAnimationFrame(raf);
       if (mapRef.current) {
         mapRef.current.remove();
         mapRef.current = null;
       }
     };
-  }, [initializeMap]);
+  }, [initializeMap, retryCount]);
 
   useEffect(() => {
     if (!mapRef.current || !currentLocation || !mapRef.current.loaded()) {
