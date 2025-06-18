@@ -126,7 +126,8 @@ const MapContainer = ({
 
     const apiKey = import.meta.env.VITE_MAPTILER_API_KEY;
     if (!apiKey) {
-      onMapError(new Error('MapTiler API key is not configured'));
+      console.error('MapTiler API key is not configured');
+      onMapError(new Error('MapTiler API key is not configured. Please check your environment variables.'));
       return;
     }
 
@@ -143,9 +144,12 @@ const MapContainer = ({
         return;
       }
 
+      const mapStyleUrl = `https://api.maptiler.com/maps/streets/style.json?key=${apiKey}`;
+      console.log('Initializing map with style URL:', mapStyleUrl);
+
       const map = new maplibregl.Map({
         container: mapContainerRef.current,
-        style: `https://api.maptiler.com/maps/streets/style.json?key=${apiKey}`,
+        style: mapStyleUrl,
         center: DEFAULT_CENTER,
         zoom: DEFAULT_ZOOM,
         attributionControl: false,
@@ -192,7 +196,11 @@ const MapContainer = ({
 
       map.on('error', (e) => {
         console.error('Map error:', e);
-        onMapError(new Error('Failed to load map'));
+        if (e.error && e.error.message && e.error.message.includes('API key')) {
+          onMapError(new Error('Invalid MapTiler API key. Please check your environment variables.'));
+        } else {
+          onMapError(new Error('Failed to load map. Please try again.'));
+        }
       });
 
     } catch (error) {

@@ -4,8 +4,6 @@ import { debounce } from 'lodash';
 const CACHE_SIZE = 100;
 const geocodeCache = new Map();
 
-const MAPTILER_KEY = import.meta.env.VITE_MAPTILER_API_KEY;
-
 // Debounced function to get address from coordinates
 export const getAddressFromCoordinates = async (latitude, longitude) => {
   const cacheKey = `${latitude},${longitude}`;
