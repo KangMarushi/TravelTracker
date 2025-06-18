@@ -9,11 +9,12 @@ const MIN_HEIGHT = { base: '300px', md: '500px' };
 const MIN_DISTANCE_THRESHOLD = 50; // meters
 const ZOOM_LEVEL = 15;
 const FLY_DURATION = 1000;
+const MAX_RETRIES = 3;
 
-const MapContainer = ({ 
-  isTracking, 
-  currentLocation, 
-  route, 
+const MapContainer = ({
+  isTracking,
+  currentLocation,
+  route,
   onMapError,
   markerEmoji = '🚶',
   minHeight = MIN_HEIGHT,
@@ -28,7 +29,6 @@ const MapContainer = ({
   const lastUpdateTimeRef = useRef(0);
   const [isMapLoaded, setIsMapLoaded] = useState(false);
   const [retryCount, setRetryCount] = useState(0);
-  const MAX_RETRIES = 3;
 
   const createMarkerElement = (emoji) => {
     const el = document.createElement('div');
@@ -42,13 +42,13 @@ const MapContainer = ({
 
   const isValidCoordinate = (lat, lng) => {
     return (
-      typeof lat === 'number' && 
-      typeof lng === 'number' && 
-      !isNaN(lat) && 
-      !isNaN(lng) && 
-      lat >= -90 && 
-      lat <= 90 && 
-      lng >= -180 && 
+      typeof lat === 'number' &&
+      typeof lng === 'number' &&
+      !isNaN(lat) &&
+      !isNaN(lng) &&
+      lat >= -90 &&
+      lat <= 90 &&
+      lng >= -180 &&
       lng <= 180
     );
   };
@@ -56,13 +56,11 @@ const MapContainer = ({
   const drawRoute = useCallback((coordinates) => {
     if (!mapRef.current || !mapRef.current.loaded()) return;
 
-    // Remove existing route layer if it exists
     if (mapRef.current.getSource('route')) {
       mapRef.current.removeLayer('route-line');
       mapRef.current.removeSource('route');
     }
 
-    // Add new route layer
     mapRef.current.addSource('route', {
       type: 'geojson',
       data: {
@@ -97,17 +95,13 @@ const MapContainer = ({
     const lastUpdate = lastUpdateTimeRef.current;
     const timeSinceLastUpdate = now - lastUpdate;
 
-    // Skip if we've updated too recently (throttle)
-    if (timeSinceLastUpdate < FLY_DURATION) {
-      return;
-    }
+    if (timeSinceLastUpdate < 3000) return;
 
     const lastCenter = lastCenterRef.current;
     const distance = lastCenter
       ? maplibregl.LngLat.convert(lastCenter).distanceTo(newCenter)
       : Infinity;
 
-    // Only update if we've moved significantly
     if (distance > MIN_DISTANCE_THRESHOLD) {
       mapRef.current.flyTo({
         center: newCenter,
@@ -126,92 +120,65 @@ const MapContainer = ({
 
     const apiKey = import.meta.env.VITE_MAPTILER_API_KEY;
     if (!apiKey) {
-      console.error('MapTiler API key is not configured');
-      onMapError(new Error('MapTiler API key is not configured. Please check your environment variables.'));
+      onMapError?.(new Error('MapTiler API key is not configured.'));
       return;
     }
 
-    try {
-      // Ensure container has dimensions
-      const container = mapContainerRef.current;
-      if (!container.offsetWidth || !container.offsetHeight) {
-        console.warn('Map container has no dimensions, retrying...');
-        if (retryCount < MAX_RETRIES) {
-          setTimeout(() => {
-            setRetryCount(prev => prev + 1);
-          }, 1000);
-        }
-        return;
+    const container = mapContainerRef.current;
+
+    if (!container.offsetWidth || !container.offsetHeight) {
+      if (retryCount < MAX_RETRIES) {
+        console.warn('Map container has no size, retrying...');
+        setTimeout(() => setRetryCount(prev => prev + 1), 1000);
+      } else {
+        onMapError?.(new Error('Map container failed to initialize after retries.'));
       }
-
-      const mapStyleUrl = `https://api.maptiler.com/maps/streets/style.json?key=${apiKey}`;
-      console.log('Initializing map with style URL:', mapStyleUrl);
-
-      const map = new maplibregl.Map({
-        container: mapContainerRef.current,
-        style: mapStyleUrl,
-        center: DEFAULT_CENTER,
-        zoom: DEFAULT_ZOOM,
-        attributionControl: false,
-        preserveDrawingBuffer: true,
-        maxZoom: 18,
-        minZoom: 2
-      });
-
-      map.on('load', () => {
-        console.log('Map loaded successfully');
-        mapRef.current = map;
-        setIsMapLoaded(true);
-        if (onMapLoaded) onMapLoaded();
-
-        // Add navigation controls after map is loaded
-        map.addControl(new maplibregl.NavigationControl(), 'top-right');
-        map.addControl(new maplibregl.AttributionControl({
-          compact: true
-        }));
-
-        // Initialize marker if we have a valid location
-        if (currentLocation && isValidCoordinate(currentLocation.latitude, currentLocation.longitude)) {
-          const newCenter = [currentLocation.longitude, currentLocation.latitude];
-          markerRef.current = new maplibregl.Marker({
-            element: createMarkerElement(markerEmoji),
-            anchor: 'bottom'
-          })
-            .setLngLat(newCenter)
-            .addTo(map);
-
-          // Set initial view if this is the first load
-          if (isFirstLoad.current) {
-            map.flyTo({
-              center: newCenter,
-              zoom: ZOOM_LEVEL,
-              essential: true,
-              duration: 0
-            });
-            lastCenterRef.current = newCenter;
-            isFirstLoad.current = false;
-          }
-        }
-      });
-
-      map.on('error', (e) => {
-        console.error('Map error:', e);
-        if (e.error && e.error.message && e.error.message.includes('API key')) {
-          onMapError(new Error('Invalid MapTiler API key. Please check your environment variables.'));
-        } else {
-          onMapError(new Error('Failed to load map. Please try again.'));
-        }
-      });
-
-    } catch (error) {
-      console.error('Map initialization error:', error);
-      onMapError(error);
+      return;
     }
+
+    const map = new maplibregl.Map({
+      container: container,
+      style: `https://api.maptiler.com/maps/streets/style.json?key=${apiKey}`,
+      center: DEFAULT_CENTER,
+      zoom: DEFAULT_ZOOM,
+      attributionControl: false,
+      preserveDrawingBuffer: true,
+      maxZoom: 18,
+      minZoom: 2
+    });
+
+    map.on('load', () => {
+      mapRef.current = map;
+      setIsMapLoaded(true);
+      onMapLoaded?.();
+
+      map.addControl(new maplibregl.NavigationControl(), 'top-right');
+      map.addControl(new maplibregl.AttributionControl({ compact: true }));
+
+      if (currentLocation && isValidCoordinate(currentLocation.latitude, currentLocation.longitude)) {
+        const newCenter = [currentLocation.longitude, currentLocation.latitude];
+        markerRef.current = new maplibregl.Marker({
+          element: createMarkerElement(markerEmoji),
+          anchor: 'bottom'
+        })
+          .setLngLat(newCenter)
+          .addTo(map);
+
+        if (isFirstLoad.current) {
+          map.flyTo({ center: newCenter, zoom: ZOOM_LEVEL, essential: true, duration: 0 });
+          lastCenterRef.current = newCenter;
+          isFirstLoad.current = false;
+        }
+      }
+    });
+
+    map.on('error', (e) => {
+      console.error('Map load error:', e);
+      onMapError?.(new Error('Map failed to load.'));
+    });
   }, [onMapError, currentLocation, markerEmoji, onMapLoaded, retryCount]);
 
-  // Initialize map on mount
   useEffect(() => {
-    // Add a small delay to ensure container is rendered
     const timer = setTimeout(() => {
       initializeMap();
     }, 100);
@@ -225,7 +192,6 @@ const MapContainer = ({
     };
   }, [initializeMap, retryCount]);
 
-  // Update marker and map when location changes
   useEffect(() => {
     if (!mapRef.current || !currentLocation || !mapRef.current.loaded()) {
       if (retryCount < MAX_RETRIES) {
@@ -238,15 +204,10 @@ const MapContainer = ({
     }
 
     const { latitude, longitude } = currentLocation;
-    
-    if (!isValidCoordinate(latitude, longitude)) {
-      console.warn('Invalid coordinates:', { latitude, longitude });
-      return;
-    }
+    if (!isValidCoordinate(latitude, longitude)) return;
 
     const newCenter = [longitude, latitude];
 
-    // Update or create marker
     if (markerRef.current) {
       markerRef.current.setLngLat(newCenter);
     } else {
@@ -258,17 +219,14 @@ const MapContainer = ({
         .addTo(mapRef.current);
     }
 
-    // Update map view only when tracking
     if (isTracking) {
       updateMapView(newCenter);
     }
   }, [isTracking, currentLocation, markerEmoji, retryCount, updateMapView]);
 
-  // Update route on map
   useEffect(() => {
     if (!mapRef.current || !route || route.length === 0 || !mapRef.current.loaded()) return;
 
-    // Check if route has changed
     const currentRoute = JSON.stringify(route);
     if (currentRoute === previousRouteRef.current) return;
     previousRouteRef.current = currentRoute;
@@ -276,11 +234,8 @@ const MapContainer = ({
     const coordinates = route.map(point => [point.longitude, point.latitude]);
     drawRoute(coordinates);
 
-    // Only fit bounds if we're not tracking
     if (!isTracking) {
-      const bounds = coordinates.reduce((bounds, coord) => {
-        return bounds.extend(coord);
-      }, new maplibregl.LngLatBounds(coordinates[0], coordinates[0]));
+      const bounds = coordinates.reduce((b, coord) => b.extend(coord), new maplibregl.LngLatBounds(coordinates[0], coordinates[0]));
 
       mapRef.current.fitBounds(bounds, {
         padding: { top: 50, bottom: 50, left: 50, right: 50 },
@@ -316,4 +271,4 @@ const MapContainer = ({
   );
 };
 
-export default MapContainer; 
+export default MapContainer;
