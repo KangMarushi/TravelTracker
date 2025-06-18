@@ -243,15 +243,8 @@ const MapContainer = ({
       ref={mapContainerRef}
       width="100%"
       height="100%"
-      position="relative"
-      display="flex"
-      flexDirection="column"
       bg="gray.50"
-      minH={minHeight}
-      style={{ 
-        minHeight: typeof minHeight === 'object' ? minHeight.base : minHeight,
-        border: '2px solid red' // Temporary border to visualize container
-      }}
+      style={{ height: '100%', minHeight: '400px' }}
     />
   );
 };
