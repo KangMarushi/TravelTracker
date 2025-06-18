@@ -3,6 +3,8 @@ import { Box, Center, Spinner, Text, VStack } from '@chakra-ui/react';
 import maplibregl from 'maplibre-gl';
 import 'maplibre-gl/dist/maplibre-gl.css';
 
+console.log('📍 MapContainer mounted');
+
 const DEFAULT_CENTER = [-74.006, 40.7128]; // New York City
 const DEFAULT_ZOOM = 15;
 const MIN_HEIGHT = { base: '300px', md: '500px' };
@@ -116,69 +118,38 @@ const MapContainer = ({
   }, []);
 
   const initializeMap = useCallback(() => {
-    if (!mapContainerRef.current || mapRef.current) return;
-
-    const apiKey = import.meta.env.VITE_MAPTILER_API_KEY;
-    if (!apiKey) {
-      onMapError?.(new Error('MapTiler API key is not configured.'));
+    console.log('Initializing map...');
+    console.log('Container ref:', mapContainerRef.current);
+    
+    if (!mapContainerRef.current) {
+      console.error('Map container not found!');
       return;
     }
 
-    const container = mapContainerRef.current;
+    try {
+      const map = new maplibregl.Map({
+        container: mapContainerRef.current,
+        style: 'https://demotiles.maplibre.org/style.json',
+        center: [0, 0],
+        zoom: 2
+      });
 
-    if (!container.offsetWidth || !container.offsetHeight) {
-      if (retryCount < MAX_RETRIES) {
-        console.warn('Map container has no size, retrying...');
-        setTimeout(() => setRetryCount(prev => prev + 1), 1000);
-      } else {
-        onMapError?.(new Error('Map container failed to initialize after retries.'));
-      }
-      return;
+      map.on('load', () => {
+        console.log('Map loaded!');
+        mapRef.current = map;
+        setIsMapLoaded(true);
+      });
+
+      map.on('error', (e) => {
+        console.error('Map error:', e);
+      });
+    } catch (error) {
+      console.error('Map initialization error:', error);
     }
-
-    const map = new maplibregl.Map({
-      container: container,
-      style: `https://api.maptiler.com/maps/streets/style.json?key=${apiKey}`,
-      center: DEFAULT_CENTER,
-      zoom: DEFAULT_ZOOM,
-      attributionControl: false,
-      preserveDrawingBuffer: true,
-      maxZoom: 18,
-      minZoom: 2
-    });
-
-    map.on('load', () => {
-      mapRef.current = map;
-      setIsMapLoaded(true);
-      onMapLoaded?.();
-
-      map.addControl(new maplibregl.NavigationControl(), 'top-right');
-      map.addControl(new maplibregl.AttributionControl({ compact: true }));
-
-      if (currentLocation && isValidCoordinate(currentLocation.latitude, currentLocation.longitude)) {
-        const newCenter = [currentLocation.longitude, currentLocation.latitude];
-        markerRef.current = new maplibregl.Marker({
-          element: createMarkerElement(markerEmoji),
-          anchor: 'bottom'
-        })
-          .setLngLat(newCenter)
-          .addTo(map);
-
-        if (isFirstLoad.current) {
-          map.flyTo({ center: newCenter, zoom: ZOOM_LEVEL, essential: true, duration: 0 });
-          lastCenterRef.current = newCenter;
-          isFirstLoad.current = false;
-        }
-      }
-    });
-
-    map.on('error', (e) => {
-      console.error('Map load error:', e);
-      onMapError?.(new Error('Map failed to load.'));
-    });
-  }, [onMapError, currentLocation, markerEmoji, onMapLoaded, retryCount]);
+  }, []);
 
   useEffect(() => {
+    console.log('Map initialization effect triggered');
     const timer = setTimeout(() => {
       initializeMap();
     }, 100);
@@ -190,7 +161,7 @@ const MapContainer = ({
         mapRef.current = null;
       }
     };
-  }, [initializeMap, retryCount]);
+  }, [initializeMap]);
 
   useEffect(() => {
     if (!mapRef.current || !currentLocation || !mapRef.current.loaded()) {
@@ -266,7 +237,10 @@ const MapContainer = ({
       flexDirection="column"
       bg="gray.50"
       minH={minHeight}
-      style={{ minHeight: typeof minHeight === 'object' ? minHeight.base : minHeight }}
+      style={{ 
+        minHeight: typeof minHeight === 'object' ? minHeight.base : minHeight,
+        border: '2px solid red' // Temporary border to visualize container
+      }}
     />
   );
 };

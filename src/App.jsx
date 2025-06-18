@@ -149,12 +149,13 @@ function App() {
                 onDistanceChange={setRecordingDistance}
               />
 
-              <div className="map-container" style={{ flex: 1, minHeight: '400px' }}>
+              <div className="map-container" style={{ flex: 1, minHeight: '500px', height: '500px' }}>
                 <MapContainer
                   isTracking={isTracking}
                   currentLocation={currentLocation}
                   route={route}
                   onMapError={handleMapError}
+                  minHeight="500px"
                 />
               </div>
             </VStack>
