@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { ChakraProvider, Container, VStack, Heading, Alert, AlertIcon, useToast } from '@chakra-ui/react';
+import { ChakraProvider, Container, VStack, Heading, Alert, AlertIcon, useToast, Box } from '@chakra-ui/react';
 import TripControls from './components/TripControls';
 import MapContainer from './components/MapContainer';
 import TripSummaryModal from './components/TripSummaryModal';
@@ -149,14 +149,29 @@ function App() {
                 onDistanceChange={setRecordingDistance}
               />
 
-              <div className="map-container" style={{ height: '500px', background: 'pink' }}>
-                <MapContainer
-                  isTracking={isTracking}
-                  currentLocation={currentLocation}
-                  route={route}
-                  onMapError={handleMapError}
-                />
-              </div>
+              <Box flex="1" display="flex" flexDirection="column" minH="100vh">
+                <Box flex="1" position="relative">
+                  <div className="map-container" style={{ height: '100%', width: '100%' }}>
+                    <MapContainer
+                      isTracking={isTracking}
+                      currentLocation={currentLocation}
+                      route={route}
+                      onMapError={handleMapError}
+                    />
+                  </div>
+                  <Box
+                    position="absolute"
+                    top={4}
+                    right={4}
+                    zIndex={1}
+                    bg="white"
+                    p={4}
+                    borderRadius="md"
+                    boxShadow="md"
+                  >
+                  </Box>
+                </Box>
+              </Box>
             </VStack>
 
             <TripSummaryModal
