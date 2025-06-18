@@ -55,10 +55,11 @@ const useTripTracker = () => {
 
   // Calculate trip stats
   useEffect(() => {
-    if (route.length > 0) {
-      const totalDistance = route.reduce((acc, point, index) => {
+    const safeRoute = Array.isArray(route) ? route : [];
+    if (safeRoute.length > 0) {
+      const totalDistance = safeRoute.reduce((acc, point, index) => {
         if (index === 0) return 0;
-        const prevPoint = route[index - 1];
+        const prevPoint = safeRoute[index - 1];
         const distance = calculateDistance(
           prevPoint.latitude,
           prevPoint.longitude,
@@ -75,7 +76,7 @@ const useTripTracker = () => {
         distance: totalDistance,
         duration,
         averageSpeed,
-        route
+        route: safeRoute
       });
     }
   }, [route, elapsed]);
