@@ -4,7 +4,7 @@ import TripControls from './components/TripControls';
 import MapContainer from './components/MapContainer';
 import TripSummaryModal from './components/TripSummaryModal';
 import ErrorBoundary from './components/ErrorBoundary';
-import useTripTracker from './hooks/useTripTracker';
+import { useTripTracker } from './hooks/useTripTracker';
 import { supabase } from './supabaseClient';
 import './App.css';
 
@@ -33,7 +33,8 @@ function App() {
     resumeTracking,
     setRecordingMode,
     setRecordingInterval,
-    setRecordingDistance
+    setRecordingDistance,
+    error: trackingError
   } = useTripTracker();
 
   const handleStop = () => {
@@ -55,7 +56,7 @@ function App() {
         createdat: now,
         updatedat: now,
         isfavorite: false,
-        avgSpeed: tripData.stats?.avgSpeed || 0,
+        avgspeed: tripData.stats?.averageSpeed || 0,
         distance: tripData.stats?.distance || 0,
         duration: tripData.stats?.duration || 0,
         endPoint: tripData.stats?.endPoint || null,
@@ -117,72 +118,56 @@ function App() {
   return (
     <ErrorBoundary>
       <ChakraProvider>
-        <div className="app-container">
-          <Container maxW="container.xl" py={4} height="100vh" display="flex" flexDirection="column">
-            <VStack spacing={4} align="stretch" flex="1" minH="0">
-              <Heading size="lg" color="blue.600">Travel Tracker</Heading>
+        <Container maxW="container.xl" h="100vh" p={0}>
+          <VStack h="100%" spacing={0}>
+            <Box w="100%" p={4} bg="white" boxShadow="sm">
+              <Heading size="lg">Travel Tracker</Heading>
+            </Box>
 
-              {mapError && (
-                <Alert status="error" variant="subtle" borderRadius="md">
-                  <AlertIcon />
-                  {mapError}
-                </Alert>
-              )}
+            {trackingError && (
+              <Alert status="error">
+                <AlertIcon />
+                {trackingError}
+              </Alert>
+            )}
 
-              <TripControls
-                isTracking={isTracking}
-                isPaused={isPaused}
-                recordingMode={recordingMode}
-                recordingInterval={recordingInterval}
-                recordingDistance={recordingDistance}
-                currentAddress={currentAddress}
-                isLoadingAddress={isLoadingAddress}
-                geoError={geoError}
-                route={route}
-                elapsed={elapsed}
-                onStart={startTracking}
-                onStop={handleStop}
-                onPause={pauseTracking}
-                onResume={resumeTracking}
-                onRecordingModeChange={setRecordingMode}
-                onIntervalChange={setRecordingInterval}
-                onDistanceChange={setRecordingDistance}
-              />
-
-              <Box flex="1" display="flex" flexDirection="column" minH="100vh">
-                <Box flex="1" position="relative">
-                  <div className="map-container" style={{ height: '100%', width: '100%' }}>
-                    <MapContainer
-                      isTracking={isTracking}
-                      currentLocation={currentLocation}
-                      route={route}
-                      onMapError={handleMapError}
-                    />
-                  </div>
-                  <Box
-                    position="absolute"
-                    top={4}
-                    right={4}
-                    zIndex={1}
-                    bg="white"
-                    p={4}
-                    borderRadius="md"
-                    boxShadow="md"
-                  >
-                  </Box>
-                </Box>
+            <Box flex="1" w="100%" position="relative">
+              <div className="map-container" style={{ height: '100%', width: '100%' }}>
+                <MapContainer
+                  isTracking={isTracking}
+                  currentLocation={currentLocation}
+                  route={route}
+                  onMapError={handleMapError}
+                />
+              </div>
+              <Box
+                position="absolute"
+                top={4}
+                right={4}
+                zIndex={1}
+                bg="white"
+                p={4}
+                borderRadius="md"
+                boxShadow="md"
+              >
+                <TripControls
+                  isTracking={isTracking}
+                  onStart={startTracking}
+                  onStop={handleStop}
+                  currentLocation={currentLocation}
+                />
               </Box>
-            </VStack>
+            </Box>
+          </VStack>
 
-            <TripSummaryModal
-              isOpen={showSummary}
-              onClose={() => setShowSummary(false)}
-              stats={tripStats}
-              onSave={handleSaveTrip}
-              isSaving={isSaving}
-            />
-          </Container>
-        </div>
+          <TripSummaryModal
+            isOpen={showSummary}
+            onClose={() => setShowSummary(false)}
+            stats={tripStats}
+            onSave={handleSaveTrip}
+            isSaving={isSaving}
+          />
+        </Container>
       </ChakraProvider>
     </ErrorBoundary>
   );

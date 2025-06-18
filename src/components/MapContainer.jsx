@@ -8,6 +8,9 @@ console.log('📍 MapContainer mounted');
 const DEFAULT_CENTER = [-74.006, 40.7128]; // New York City
 const DEFAULT_ZOOM = 15;
 const MAX_RETRIES = 3;
+const MIN_DISTANCE_THRESHOLD = 50; // meters
+const ZOOM_LEVEL = 15;
+const FLY_DURATION = 1000;
 
 const MapContainer = ({ 
   isTracking, 
@@ -20,6 +23,58 @@ const MapContainer = ({
   const mapRef = useRef(null);
   const markerRef = useRef(null);
   const [retryCount, setRetryCount] = useState(0);
+  const lastCenterRef = useRef(null);
+  const lastUpdateTimeRef = useRef(0);
+
+  const createMarkerElement = (emoji) => {
+    const el = document.createElement('div');
+    el.className = 'marker';
+    el.style.fontSize = '24px';
+    el.style.textAlign = 'center';
+    el.style.transform = 'translate(-50%, -50%)';
+    el.innerHTML = emoji;
+    return el;
+  };
+
+  const isValidCoordinate = (lat, lng) => {
+    return (
+      typeof lat === 'number' &&
+      typeof lng === 'number' &&
+      !isNaN(lat) &&
+      !isNaN(lng) &&
+      lat >= -90 &&
+      lat <= 90 &&
+      lng >= -180 &&
+      lng <= 180
+    );
+  };
+
+  const updateMapView = useCallback((newCenter) => {
+    if (!mapRef.current || !mapRef.current.loaded()) return;
+
+    const now = Date.now();
+    const lastUpdate = lastUpdateTimeRef.current;
+    const timeSinceLastUpdate = now - lastUpdate;
+
+    if (timeSinceLastUpdate < 3000) return;
+
+    const lastCenter = lastCenterRef.current;
+    const distance = lastCenter
+      ? maplibregl.LngLat.convert(lastCenter).distanceTo(newCenter)
+      : Infinity;
+
+    if (distance > MIN_DISTANCE_THRESHOLD) {
+      mapRef.current.flyTo({
+        center: newCenter,
+        zoom: ZOOM_LEVEL,
+        essential: true,
+        duration: FLY_DURATION,
+        maxDuration: FLY_DURATION
+      });
+      lastCenterRef.current = newCenter;
+      lastUpdateTimeRef.current = now;
+    }
+  }, []);
 
   const initializeMap = useCallback(() => {
     console.log('Initializing map...');
@@ -34,8 +89,8 @@ const MapContainer = ({
       const map = new maplibregl.Map({
         container: mapContainerRef.current,
         style: 'https://demotiles.maplibre.org/style.json',
-        center: [0, 0],
-        zoom: 2
+        center: DEFAULT_CENTER,
+        zoom: DEFAULT_ZOOM
       });
 
       map.on('load', () => {
@@ -76,6 +131,31 @@ const MapContainer = ({
       }
     };
   }, [initializeMap, retryCount]);
+
+  // Handle current location updates
+  useEffect(() => {
+    if (!mapRef.current || !currentLocation || !mapRef.current.loaded()) return;
+
+    const { latitude, longitude } = currentLocation;
+    if (!isValidCoordinate(latitude, longitude)) return;
+
+    const newCenter = [longitude, latitude];
+
+    if (markerRef.current) {
+      markerRef.current.setLngLat(newCenter);
+    } else {
+      markerRef.current = new maplibregl.Marker({
+        element: createMarkerElement(markerEmoji),
+        anchor: 'bottom'
+      })
+        .setLngLat(newCenter)
+        .addTo(mapRef.current);
+    }
+
+    if (isTracking) {
+      updateMapView(newCenter);
+    }
+  }, [isTracking, currentLocation, markerEmoji, updateMapView]);
 
   return (
     <Box
