@@ -134,7 +134,7 @@ const useTripTracker = () => {
     if (isTracking && !isPaused) {
       const options = {
         enableHighAccuracy: true,
-        maximumAge: 0,
+        maximumAge: 60000, // Accept positions up to 60 seconds old
         timeout: 30000
       };
 
@@ -146,12 +146,17 @@ const useTripTracker = () => {
             timestamp: new Date().toISOString()
           };
           
-          setCurrentLocation(newLocation);
+          // Only update if enough time has passed since last update
+          const now = Date.now();
+          const lastUpdate = lastRecordedTimeRef.current || 0;
+          if (now - lastUpdate >= 60000) { // 60 seconds
+            setCurrentLocation(newLocation);
+            lastRecordedTimeRef.current = now;
+          }
           
           if (shouldRecordPoint(newLocation)) {
             setRoute(prev => [...prev, newLocation]);
             lastRecordedPointRef.current = newLocation;
-            lastRecordedTimeRef.current = Date.now();
           }
         },
         (error) => {

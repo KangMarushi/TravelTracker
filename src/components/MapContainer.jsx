@@ -4,7 +4,7 @@ import maplibregl from 'maplibre-gl';
 import 'maplibre-gl/dist/maplibre-gl.css';
 
 const DEFAULT_CENTER = [-74.006, 40.7128]; // New York City
-const DEFAULT_ZOOM = 12;
+const DEFAULT_ZOOM = 15;
 const MIN_HEIGHT = { base: '300px', md: '500px' };
 const MIN_DISTANCE_THRESHOLD = 50; // meters
 const ZOOM_LEVEL = 15;
@@ -131,6 +131,18 @@ const MapContainer = ({
     }
 
     try {
+      // Ensure container has dimensions
+      const container = mapContainerRef.current;
+      if (!container.offsetWidth || !container.offsetHeight) {
+        console.warn('Map container has no dimensions, retrying...');
+        if (retryCount < MAX_RETRIES) {
+          setTimeout(() => {
+            setRetryCount(prev => prev + 1);
+          }, 1000);
+        }
+        return;
+      }
+
       const map = new maplibregl.Map({
         container: mapContainerRef.current,
         style: `https://api.maptiler.com/maps/streets/style.json?key=${apiKey}`,
@@ -187,18 +199,23 @@ const MapContainer = ({
       console.error('Map initialization error:', error);
       onMapError(error);
     }
-  }, [onMapError, currentLocation, markerEmoji, onMapLoaded]);
+  }, [onMapError, currentLocation, markerEmoji, onMapLoaded, retryCount]);
 
   // Initialize map on mount
   useEffect(() => {
-    initializeMap();
+    // Add a small delay to ensure container is rendered
+    const timer = setTimeout(() => {
+      initializeMap();
+    }, 100);
+
     return () => {
+      clearTimeout(timer);
       if (mapRef.current) {
         mapRef.current.remove();
         mapRef.current = null;
       }
     };
-  }, [initializeMap]);
+  }, [initializeMap, retryCount]);
 
   // Update marker and map when location changes
   useEffect(() => {
@@ -286,6 +303,7 @@ const MapContainer = ({
       flexDirection="column"
       bg="gray.50"
       minH={minHeight}
+      style={{ minHeight: typeof minHeight === 'object' ? minHeight.base : minHeight }}
     />
   );
 };
