@@ -4,7 +4,7 @@ import TripControls from './components/TripControls';
 import MapContainer from './components/MapContainer';
 import TripSummaryModal from './components/TripSummaryModal';
 import ErrorBoundary from './components/ErrorBoundary';
-import { useTripTracker } from './hooks/useTripTracker';
+import useTripTracker from './hooks/useTripTracker';
 import { supabase } from './supabaseClient';
 import './App.css';
 
