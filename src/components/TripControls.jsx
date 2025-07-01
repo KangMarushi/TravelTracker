@@ -75,6 +75,9 @@ const TripControls = ({
     return `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}:${remainingSeconds.toString().padStart(2, '0')}`;
   };
 
+  const safeRoute = Array.isArray(route) ? route : [];
+  const safeElapsed = typeof elapsed === 'number' ? elapsed : 0;
+
   return (
     <VStack spacing={4} align="stretch">
       {!isTracking && (
@@ -142,7 +145,7 @@ const TripControls = ({
               )}
             </HStack>
             <Text color="blue.700" fontSize="sm">
-              Elapsed Time: {formatElapsedTime(elapsed)}
+              Elapsed Time: {formatElapsedTime(safeElapsed)}
             </Text>
           </VStack>
         </Box>
@@ -203,12 +206,12 @@ const TripControls = ({
         </Alert>
       )}
 
-      {route.length > 0 && (
+      {safeRoute.length > 0 && (
         <Box p={4} borderWidth={1} borderRadius="md" bg={bgColor} boxShadow="sm" borderColor={borderColor}>
           <VStack spacing={2} align="stretch">
             <Text fontWeight="medium" color="gray.700">Trip Progress</Text>
-            <Text color="gray.600">Points recorded: {route.length}</Text>
-            <Text color="gray.600">Elapsed time: {formatElapsedTime(elapsed)}</Text>
+            <Text color="gray.600">Points recorded: {safeRoute.length}</Text>
+            <Text color="gray.600">Elapsed time: {formatElapsedTime(safeElapsed)}</Text>
           </VStack>
         </Box>
       )}
